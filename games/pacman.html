@@ -49,7 +49,7 @@
     </style>
 </head>
 <body>
-    <a href="/games/" class="back-link">&#8592; BACK</a>
+    <a href="/" class="back-link">&#8592; BACK</a>
     <canvas id="game"></canvas>
     <script>
     (() => {
@@ -888,14 +888,7 @@
             ctx.fill();
             ctx.restore();
 
-            if (progress >= 1) {
-                if (state.lives <= 0) {
-                    state.phase = 'DEAD';
-                } else {
-                    state.phase = 'PLAYING';
-                    resetPositions();
-                }
-            }
+            // Death transition handled in update loop
         }
 
         function renderGameOver(time) {
@@ -988,6 +981,14 @@
 
             if (state.phase === 'DYING') {
                 state.deathTimer += dt;
+                if (state.deathTimer >= 1.0) {
+                    if (state.lives <= 0) {
+                        state.phase = 'DEAD';
+                    } else {
+                        state.phase = 'PLAYING';
+                        resetPositions();
+                    }
+                }
             }
 
             updateParticles(dt);

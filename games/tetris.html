@@ -44,7 +44,7 @@ canvas {
 </style>
 </head>
 <body>
-<a href="/games/" class="back-link">&larr; BACK</a>
+<a href="/" class="back-link">&larr; BACK</a>
 <canvas id="c"></canvas>
 <script>
 (function() {
@@ -125,7 +125,8 @@ let nextPiece = null;
 let score = 0;
 let lines = 0;
 let level = 1;
-let highScore = parseInt(localStorage.getItem("tetris_high") || "0", 10);
+let highScore = 0;
+try { highScore = parseInt(localStorage.getItem("tetris_high") || "0", 10); } catch(e) {}
 let dropTimer = 0;
 let dropInterval = 1000;
 let lastTime = 0;
@@ -285,7 +286,7 @@ function clearLines() {
         dropInterval = Math.max(50, 1000 - (level - 1) * 80);
         if (score > highScore) {
             highScore = score;
-            localStorage.setItem("tetris_high", highScore.toString());
+            try { localStorage.setItem("tetris_high", highScore.toString()); } catch(e) {}
         }
     }
 }
@@ -699,13 +700,12 @@ canvas.addEventListener("touchmove", function(e) {
     var dx = t.clientX - touchStartX;
     var dy = t.clientY - touchStartY;
 
-    if (Math.abs(dx) > swipeThreshold && !touchMoved) {
+    if (Math.abs(dx) > swipeThreshold) {
         touchMoved = true;
         if (dx > 0) movePiece(1, 0);
         else movePiece(-1, 0);
         touchStartX = t.clientX;
         touchStartY = t.clientY;
-        touchMoved = false;
     }
     if (dy > swipeThreshold) {
         if (movePiece(0, 1)) {

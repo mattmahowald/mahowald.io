@@ -42,7 +42,7 @@ canvas {
 </style>
 </head>
 <body>
-<a href="/games/" class="back-link">&larr; BACK</a>
+<a href="/" class="back-link">&larr; BACK</a>
 <canvas id="game"></canvas>
 <script>
 (function() {
@@ -217,8 +217,11 @@ canvas {
 
     document.addEventListener("keydown", function(e) {
         if (e.repeat) return;
-        e.preventDefault();
-        flap();
+        var gameKeys = ["Space", "ArrowUp", "KeyW", "ArrowDown", "KeyS"];
+        if (gameKeys.indexOf(e.code) !== -1) {
+            e.preventDefault();
+            flap();
+        }
     });
     canvas.addEventListener("mousedown", function(e) { e.preventDefault(); flap(); });
     canvas.addEventListener("touchstart", function(e) { e.preventDefault(); flap(); }, { passive: false });
