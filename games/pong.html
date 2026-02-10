@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>PONG - mahowald.io</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: #0a0a1a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: "SF Mono", "Fira Code", "Courier New", monospace;
+    -webkit-user-select: none;
+    user-select: none;
+}
+canvas {
+    display: block;
+    border-radius: 4px;
+    box-shadow:
+        0 0 40px rgba(0, 255, 200, 0.08),
+        0 0 80px rgba(0, 255, 200, 0.04),
+        0 0 120px rgba(0, 255, 200, 0.02),
+        0 4px 30px rgba(0, 0, 0, 0.6);
+}
+.back-link {
+    position: fixed;
+    top: 16px;
+    left: 16px;
+    color: #00ffc8;
+    text-decoration: none;
+    font-family: "SF Mono", "Fira Code", "Courier New", monospace;
+    font-size: 14px;
+    z-index: 100;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+}
+.back-link:hover { opacity: 1; }
+</style>
+</head>
+<body>
+<a href="/games/" class="back-link">&larr; BACK</a>
+<canvas id="c"></canvas>
+<script>
+(function() {
+    "use strict";
+
+    // ── Constants ──────────────────────────────────────────────
+    const CYAN    = "#00ffc8";
+    const PURPLE  = "#a855f7";
+    const YELLOW  = "#ffd93d";
+    const DANGER  = "#ff6b6b";
+    const BG      = "#0a0a1a";
+    const WHITE   = "#ffffff";
+    const FONT    = '"SF Mono", "Fira Code", "Courier New", monospace';
+
+    const WIN_SCORE = 11;
+    const PADDLE_W  = 14;
+    const PADDLE_H  = 100;
+    const BALL_R    = 8;
+    const BALL_SPEED_INIT = 6;
+    const BALL_SPEED_INC  = 0.35;
+    const BALL_SPEED_MAX  = 16;
+    const PADDLE_SPEED    = 7;
+    const AI_EASE         = 0.06;
+    const TRAIL_LENGTH    = 12;
+
+    // ── Canvas Setup ──────────────────────────────────────────
+    const canvas = document.getElementById("c");
+    const ctx    = canvas.getContext("2d");
+    let W, H, dpr;
+
+    function resize() {
+        dpr = window.devicePixelRatio || 1;
+        W = Math.min(window.innerWidth - 32, 900);
+        H = Math.min(window.innerHeight - 32, 600);
+        if (W / H > 1.5) W = H * 1.5;
+        if (H / W > 1.0) H = W * 1.0;
+        W = Math.round(W);
+        H = Math.round(H);
+        canvas.width  = W * dpr;
+        canvas.height = H * dpr;
+        canvas.style.width  = W + "px";
+        canvas.style.height = H + "px";
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    window.addEventListener("resize", resize);
+    resize();
+
+    // ── Game State ────────────────────────────────────────────
+    const Phase = { START: 0, PLAYING: 1, SCORED: 2, GAME_OVER: 3 };
+    let phase = Phase.START;
+
+    let playerScore = 0;
+    let aiScore     = 0;
+
+    // Paddles
+    let playerY = H / 2;
+    let aiY     = H / 2;
+
+    // Ball
+    let ballX, ballY, ballVX, ballVY, ballSpeed;
+    let trail = [];
+
+    // Particles
+    let particles = [];
+
+    // Screen shake
+    let shakeX = 0, shakeY = 0, shakeMag = 0;
+
+    // Score animation
+    let scoreFlash = 0;
+    let scoredTimer = 0;
+    let lastScorer = 0; // 1 = player, 2 = ai
+
+    // Demo ball for start screen
+    let demoBX, demoBY, demoBVX, demoBVY;
+
+    // Input state
+    let keysDown = {};
+    let mouseY = null;
+    let touchY = null;
+
+    // Timing
+    let lastTime = 0;
+    let accumulator = 0;
+    const FIXED_DT = 1 / 60;
+
+    // ── Initialize ────────────────────────────────────────────
+    function resetBall(direction) {
+        ballX = W / 2;
+        ballY = H / 2;
+        ballSpeed = BALL_SPEED_INIT;
+        const angle = (Math.random() * 0.8 - 0.4); // -0.4 to 0.4 radians
+        ballVX = Math.cos(angle) * ballSpeed * (direction || (Math.random() < 0.5 ? 1 : -1));
+        ballVY = Math.sin(angle) * ballSpeed;
+        trail = [];
+    }
+
+    function initDemo() {
+        demoBX = W / 2;
+        demoBY = H / 2;
+        const angle = Math.random() * Math.PI * 2;
+        demoBVX = Math.cos(angle) * 4;
+        demoBVY = Math.sin(angle) * 4;
+    }
+
+    function startGame() {
+        playerScore = 0;
+        aiScore = 0;
+        playerY = H / 2;
+        aiY = H / 2;
+        resetBall(1);
+        phase = Phase.PLAYING;
+        particles = [];
+        shakeX = 0; shakeY = 0; shakeMag = 0;
+    }
+
+    function spawnParticles(x, y, color, count) {
+        for (let i = 0; i < count; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const speed = Math.random() * 5 + 2;
+            particles.push({
+                x: x,
+                y: y,
+                vx: Math.cos(angle) * speed,
+                vy: Math.sin(angle) * speed,
+                life: 1.0,
+                decay: 0.015 + Math.random() * 0.025,
+                size: Math.random() * 4 + 2,
+                color: color
+            });
+        }
+    }
+
+    function triggerShake(magnitude) {
+        shakeMag = magnitude;
+    }
+
+    initDemo();
+
+    // ── Input Handling ────────────────────────────────────────
+    window.addEventListener("keydown", function(e) {
+        keysDown[e.key] = true;
+        if (e.key === "ArrowUp" || e.key === "ArrowDown") e.preventDefault();
+        if (phase === Phase.START) startGame();
+        if (phase === Phase.GAME_OVER && (e.key === " " || e.key === "Enter")) {
+            startGame();
+        }
+    });
+    window.addEventListener("keyup", function(e) {
+        keysDown[e.key] = false;
+    });
+
+    canvas.addEventListener("mousemove", function(e) {
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        if (x < W * 0.6) {
+            mouseY = e.clientY - rect.top;
+        } else {
+            mouseY = null;
+        }
+    });
+    canvas.addEventListener("mouseleave", function() {
+        mouseY = null;
+    });
+
+    canvas.addEventListener("click", function(e) {
+        if (phase === Phase.START) startGame();
+        if (phase === Phase.GAME_OVER) startGame();
+    });
+
+    canvas.addEventListener("touchstart", function(e) {
+        e.preventDefault();
+        if (phase === Phase.START) { startGame(); return; }
+        if (phase === Phase.GAME_OVER) { startGame(); return; }
+        const rect = canvas.getBoundingClientRect();
+        const touch = e.touches[0];
+        touchY = touch.clientY - rect.top;
+    }, { passive: false });
+
+    canvas.addEventListener("touchmove", function(e) {
+        e.preventDefault();
+        const rect = canvas.getBoundingClientRect();
+        const touch = e.touches[0];
+        touchY = touch.clientY - rect.top;
+    }, { passive: false });
+
+    canvas.addEventListener("touchend", function(e) {
+        e.preventDefault();
+        touchY = null;
+    }, { passive: false });
+
+    // ── Update ────────────────────────────────────────────────
+    function updatePlaying() {
+        // Player paddle movement
+        let targetY = null;
+
+        if (keysDown["ArrowUp"] || keysDown["w"] || keysDown["W"]) {
+            playerY -= PADDLE_SPEED;
+        }
+        if (keysDown["ArrowDown"] || keysDown["s"] || keysDown["S"]) {
+            playerY += PADDLE_SPEED;
+        }
+        if (touchY !== null) {
+            targetY = touchY;
+        } else if (mouseY !== null) {
+            targetY = mouseY;
+        }
+        if (targetY !== null) {
+            const diff = targetY - playerY;
+            playerY += diff * 0.15;
+        }
+
+        // Clamp player paddle
+        playerY = Math.max(PADDLE_H / 2, Math.min(H - PADDLE_H / 2, playerY));
+
+        // AI paddle movement
+        let aiTarget = ballY;
+        // Only react well when ball is coming towards AI
+        if (ballVX > 0) {
+            // Predict where ball will be
+            const timeToReach = (W - 30 - PADDLE_W - ballX) / ballVX;
+            aiTarget = ballY + ballVY * timeToReach * 0.7;
+        }
+        const aiDiff = aiTarget - aiY;
+        aiY += aiDiff * AI_EASE;
+        aiY = Math.max(PADDLE_H / 2, Math.min(H - PADDLE_H / 2, aiY));
+
+        // Ball movement
+        ballX += ballVX;
+        ballY += ballVY;
+
+        // Trail
+        trail.push({ x: ballX, y: ballY });
+        if (trail.length > TRAIL_LENGTH) trail.shift();
+
+        // Top/bottom bounce
+        if (ballY - BALL_R <= 0) {
+            ballY = BALL_R;
+            ballVY = Math.abs(ballVY);
+        }
+        if (ballY + BALL_R >= H) {
+            ballY = H - BALL_R;
+            ballVY = -Math.abs(ballVY);
+        }
+
+        // Player paddle collision (left)
+        const pLeft  = 30;
+        const pRight = 30 + PADDLE_W;
+        const pTop   = playerY - PADDLE_H / 2;
+        const pBot   = playerY + PADDLE_H / 2;
+
+        if (ballX - BALL_R <= pRight && ballX + BALL_R >= pLeft &&
+            ballY >= pTop && ballY <= pBot && ballVX < 0) {
+            ballX = pRight + BALL_R;
+            const hitPos = (ballY - playerY) / (PADDLE_H / 2); // -1 to 1
+            const angle = hitPos * Math.PI / 3; // max 60 degrees
+            ballSpeed = Math.min(ballSpeed + BALL_SPEED_INC, BALL_SPEED_MAX);
+            ballVX = Math.cos(angle) * ballSpeed;
+            ballVY = Math.sin(angle) * ballSpeed;
+            spawnParticles(pRight, ballY, CYAN, 8);
+        }
+
+        // AI paddle collision (right)
+        const aLeft  = W - 30 - PADDLE_W;
+        const aRight = W - 30;
+        const aTop   = aiY - PADDLE_H / 2;
+        const aBot   = aiY + PADDLE_H / 2;
+
+        if (ballX + BALL_R >= aLeft && ballX - BALL_R <= aRight &&
+            ballY >= aTop && ballY <= aBot && ballVX > 0) {
+            ballX = aLeft - BALL_R;
+            const hitPos = (ballY - aiY) / (PADDLE_H / 2); // -1 to 1
+            const angle = hitPos * Math.PI / 3;
+            ballSpeed = Math.min(ballSpeed + BALL_SPEED_INC, BALL_SPEED_MAX);
+            ballVX = -Math.cos(angle) * ballSpeed;
+            ballVY = Math.sin(angle) * ballSpeed;
+            spawnParticles(aLeft, ballY, PURPLE, 8);
+        }
+
+        // Scoring
+        if (ballX < -BALL_R * 2) {
+            // AI scores
+            aiScore++;
+            lastScorer = 2;
+            scoreFlash = 1.0;
+            triggerShake(12);
+            spawnParticles(0, ballY, DANGER, 30);
+            if (aiScore >= WIN_SCORE) {
+                phase = Phase.GAME_OVER;
+            } else {
+                phase = Phase.SCORED;
+                scoredTimer = 60;
+            }
+        }
+        if (ballX > W + BALL_R * 2) {
+            // Player scores
+            playerScore++;
+            lastScorer = 1;
+            scoreFlash = 1.0;
+            triggerShake(12);
+            spawnParticles(W, ballY, CYAN, 30);
+            if (playerScore >= WIN_SCORE) {
+                phase = Phase.GAME_OVER;
+            } else {
+                phase = Phase.SCORED;
+                scoredTimer = 60;
+            }
+        }
+    }
+
+    function updateScored() {
+        scoredTimer--;
+        if (scoredTimer <= 0) {
+            resetBall(lastScorer === 1 ? -1 : 1);
+            phase = Phase.PLAYING;
+        }
+    }
+
+    function updateDemo() {
+        demoBX += demoBVX;
+        demoBY += demoBVY;
+        if (demoBY - BALL_R <= 0 || demoBY + BALL_R >= H) {
+            demoBVY *= -1;
+            demoBY = Math.max(BALL_R, Math.min(H - BALL_R, demoBY));
+        }
+        if (demoBX - BALL_R <= 0 || demoBX + BALL_R >= W) {
+            demoBVX *= -1;
+            demoBX = Math.max(BALL_R, Math.min(W - BALL_R, demoBX));
+        }
+    }
+
+    function updateParticles() {
+        for (let i = particles.length - 1; i >= 0; i--) {
+            const p = particles[i];
+            p.x += p.vx;
+            p.y += p.vy;
+            p.vx *= 0.97;
+            p.vy *= 0.97;
+            p.life -= p.decay;
+            if (p.life <= 0) particles.splice(i, 1);
+        }
+    }
+
+    function updateShake() {
+        if (shakeMag > 0.5) {
+            shakeX = (Math.random() - 0.5) * shakeMag;
+            shakeY = (Math.random() - 0.5) * shakeMag;
+            shakeMag *= 0.85;
+        } else {
+            shakeX = 0;
+            shakeY = 0;
+            shakeMag = 0;
+        }
+    }
+
+    function updateScoreFlash() {
+        if (scoreFlash > 0) {
+            scoreFlash -= 0.03;
+            if (scoreFlash < 0) scoreFlash = 0;
+        }
+    }
+
+    function update() {
+        updateShake();
+        updateScoreFlash();
+        updateParticles();
+
+        switch (phase) {
+            case Phase.START:
+                updateDemo();
+                break;
+            case Phase.PLAYING:
+                updatePlaying();
+                break;
+            case Phase.SCORED:
+                updateScored();
+                break;
+            case Phase.GAME_OVER:
+                break;
+        }
+    }
+
+    // ── Draw ──────────────────────────────────────────────────
+    function drawBackground() {
+        ctx.fillStyle = BG;
+        ctx.fillRect(0, 0, W, H);
+
+        // Subtle vignette
+        const grad = ctx.createRadialGradient(W / 2, H / 2, W * 0.2, W / 2, H / 2, W * 0.75);
+        grad.addColorStop(0, "rgba(0,0,0,0)");
+        grad.addColorStop(1, "rgba(0,0,0,0.4)");
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, W, H);
+    }
+
+    function drawCenterLine() {
+        ctx.save();
+        ctx.setLineDash([8, 8]);
+        ctx.strokeStyle = "rgba(255,255,255,0.1)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(W / 2, 0);
+        ctx.lineTo(W / 2, H);
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    function drawScore() {
+        const fontSize = Math.min(W * 0.1, 72);
+        ctx.font = "bold " + fontSize + "px " + FONT;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "top";
+
+        // Player score (left)
+        let pAlpha = 0.3;
+        let aAlpha = 0.3;
+        if (scoreFlash > 0 && lastScorer === 1) pAlpha = 0.3 + scoreFlash * 0.7;
+        if (scoreFlash > 0 && lastScorer === 2) aAlpha = 0.3 + scoreFlash * 0.7;
+
+        ctx.fillStyle = "rgba(0, 255, 200, " + pAlpha + ")";
+        ctx.fillText(playerScore.toString(), W / 4, 20);
+
+        ctx.fillStyle = "rgba(168, 85, 247, " + aAlpha + ")";
+        ctx.fillText(aiScore.toString(), W * 3 / 4, 20);
+    }
+
+    function drawPaddle(x, y, color) {
+        const pTop = y - PADDLE_H / 2;
+        const r = 4;
+
+        // Glow
+        ctx.save();
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 15;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.roundRect(x, pTop, PADDLE_W, PADDLE_H, r);
+        ctx.fill();
+        ctx.restore();
+
+        // Solid paddle
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.roundRect(x, pTop, PADDLE_W, PADDLE_H, r);
+        ctx.fill();
+    }
+
+    function drawBallTrail() {
+        for (let i = 0; i < trail.length; i++) {
+            const t = trail[i];
+            const alpha = (i / trail.length) * 0.5;
+            const size = BALL_R * (0.3 + 0.7 * (i / trail.length));
+            ctx.beginPath();
+            ctx.arc(t.x, t.y, size, 0, Math.PI * 2);
+            ctx.fillStyle = "rgba(255, 217, 61, " + alpha + ")";
+            ctx.fill();
+        }
+    }
+
+    function drawBall(x, y) {
+        // Outer glow
+        ctx.save();
+        ctx.shadowColor = YELLOW;
+        ctx.shadowBlur = 25;
+        ctx.beginPath();
+        ctx.arc(x, y, BALL_R, 0, Math.PI * 2);
+        ctx.fillStyle = YELLOW;
+        ctx.fill();
+        ctx.restore();
+
+        // Core
+        ctx.beginPath();
+        ctx.arc(x, y, BALL_R, 0, Math.PI * 2);
+        ctx.fillStyle = YELLOW;
+        ctx.fill();
+
+        // Highlight
+        ctx.beginPath();
+        ctx.arc(x - 2, y - 2, BALL_R * 0.4, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(255,255,255,0.5)";
+        ctx.fill();
+    }
+
+    function drawParticles() {
+        for (let i = 0; i < particles.length; i++) {
+            const p = particles[i];
+            ctx.globalAlpha = p.life;
+            ctx.fillStyle = p.color;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+    }
+
+    function drawStartScreen() {
+        drawBackground();
+        drawCenterLine();
+
+        // Demo ball
+        drawBall(demoBX, demoBY);
+
+        // Title
+        const titleSize = Math.min(W * 0.18, 120);
+        ctx.font = "bold " + titleSize + "px " + FONT;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+
+        // Cyan gradient text
+        const grad = ctx.createLinearGradient(W / 2 - 100, H * 0.32, W / 2 + 100, H * 0.32);
+        grad.addColorStop(0, CYAN);
+        grad.addColorStop(1, "#00cc9e");
+        ctx.fillStyle = grad;
+
+        ctx.save();
+        ctx.shadowColor = CYAN;
+        ctx.shadowBlur = 30;
+        ctx.fillText("PONG", W / 2, H * 0.32);
+        ctx.restore();
+
+        // Subtitle
+        const subSize = Math.min(W * 0.028, 16);
+        ctx.font = subSize + "px " + FONT;
+        ctx.fillStyle = "rgba(255,255,255,0.35)";
+        ctx.fillText("mahowald.io", W / 2, H * 0.32 + titleSize * 0.55);
+
+        // VS AI
+        const vsSize = Math.min(W * 0.04, 24);
+        ctx.font = "bold " + vsSize + "px " + FONT;
+        ctx.fillStyle = PURPLE;
+        ctx.fillText("VS AI", W / 2, H * 0.55);
+
+        // Prompt
+        const promptAlpha = 0.4 + Math.sin(Date.now() * 0.004) * 0.3;
+        const promptSize = Math.min(W * 0.03, 16);
+        ctx.font = promptSize + "px " + FONT;
+        ctx.fillStyle = "rgba(255,255,255," + promptAlpha + ")";
+        ctx.fillText("tap or click to play", W / 2, H * 0.72);
+
+        // Controls hint
+        ctx.font = (promptSize * 0.8) + "px " + FONT;
+        ctx.fillStyle = "rgba(255,255,255,0.2)";
+        ctx.fillText("\u2191\u2193  W/S  MOUSE  TOUCH", W / 2, H * 0.82);
+    }
+
+    function drawPlayingScreen() {
+        drawBackground();
+        drawCenterLine();
+        drawScore();
+        drawBallTrail();
+        drawPaddle(30, playerY, CYAN);
+        drawPaddle(W - 30 - PADDLE_W, aiY, PURPLE);
+        drawBall(ballX, ballY);
+        drawParticles();
+    }
+
+    function drawScoredScreen() {
+        drawBackground();
+        drawCenterLine();
+        drawScore();
+        drawPaddle(30, playerY, CYAN);
+        drawPaddle(W - 30 - PADDLE_W, aiY, PURPLE);
+        drawParticles();
+
+        // Flash overlay
+        if (scoreFlash > 0.3) {
+            const color = lastScorer === 1 ? "0, 255, 200" : "168, 85, 247";
+            ctx.fillStyle = "rgba(" + color + ", " + (scoreFlash - 0.3) * 0.15 + ")";
+            ctx.fillRect(0, 0, W, H);
+        }
+    }
+
+    function drawGameOverScreen() {
+        drawBackground();
+        drawCenterLine();
+        drawScore();
+        drawPaddle(30, playerY, CYAN);
+        drawPaddle(W - 30 - PADDLE_W, aiY, PURPLE);
+        drawParticles();
+
+        // Overlay
+        ctx.fillStyle = "rgba(10, 10, 26, 0.7)";
+        ctx.fillRect(0, 0, W, H);
+
+        const won = playerScore >= WIN_SCORE;
+        const titleSize = Math.min(W * 0.1, 60);
+        ctx.font = "bold " + titleSize + "px " + FONT;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+
+        if (won) {
+            ctx.save();
+            ctx.shadowColor = CYAN;
+            ctx.shadowBlur = 25;
+            ctx.fillStyle = CYAN;
+            ctx.fillText("YOU WIN!", W / 2, H * 0.38);
+            ctx.restore();
+        } else {
+            ctx.save();
+            ctx.shadowColor = PURPLE;
+            ctx.shadowBlur = 25;
+            ctx.fillStyle = PURPLE;
+            ctx.fillText("AI WINS!", W / 2, H * 0.38);
+            ctx.restore();
+        }
+
+        // Final score
+        const scoreSize = Math.min(W * 0.05, 28);
+        ctx.font = scoreSize + "px " + FONT;
+        ctx.fillStyle = "rgba(255,255,255,0.6)";
+        ctx.fillText(playerScore + " - " + aiScore, W / 2, H * 0.52);
+
+        // Restart prompt
+        const promptAlpha = 0.4 + Math.sin(Date.now() * 0.004) * 0.3;
+        const promptSize = Math.min(W * 0.03, 16);
+        ctx.font = promptSize + "px " + FONT;
+        ctx.fillStyle = "rgba(255,255,255," + promptAlpha + ")";
+        ctx.fillText("tap or click to play again", W / 2, H * 0.66);
+    }
+
+    function draw() {
+        ctx.save();
+        ctx.translate(shakeX, shakeY);
+
+        switch (phase) {
+            case Phase.START:
+                drawStartScreen();
+                break;
+            case Phase.PLAYING:
+                drawPlayingScreen();
+                break;
+            case Phase.SCORED:
+                drawScoredScreen();
+                break;
+            case Phase.GAME_OVER:
+                drawGameOverScreen();
+                break;
+        }
+
+        ctx.restore();
+    }
+
+    // ── Game Loop ─────────────────────────────────────────────
+    function loop(now) {
+        requestAnimationFrame(loop);
+
+        if (!lastTime) { lastTime = now; }
+        let dt = (now - lastTime) / 1000;
+        lastTime = now;
+
+        // Clamp to prevent spiral of death
+        if (dt > 0.1) dt = 0.1;
+
+        accumulator += dt;
+
+        while (accumulator >= FIXED_DT) {
+            update();
+            accumulator -= FIXED_DT;
+        }
+
+        draw();
+    }
+
+    requestAnimationFrame(loop);
+
+    // ── Handle resize re-init ─────────────────────────────────
+    let resizeTimeout;
+    window.addEventListener("resize", function() {
+        clearTimeout(resizeTimeout);
+        resizeTimeout = setTimeout(function() {
+            resize();
+            // Clamp positions after resize
+            playerY = Math.max(PADDLE_H / 2, Math.min(H - PADDLE_H / 2, playerY));
+            aiY = Math.max(PADDLE_H / 2, Math.min(H - PADDLE_H / 2, aiY));
+            if (phase === Phase.START) {
+                demoBX = Math.max(BALL_R, Math.min(W - BALL_R, demoBX));
+                demoBY = Math.max(BALL_R, Math.min(H - BALL_R, demoBY));
+            }
+            if (phase === Phase.PLAYING || phase === Phase.SCORED) {
+                ballX = Math.max(BALL_R, Math.min(W - BALL_R, ballX));
+                ballY = Math.max(BALL_R, Math.min(H - BALL_R, ballY));
+            }
+        }, 100);
+    });
+
+    // ── roundRect polyfill ────────────────────────────────────
+    if (!ctx.roundRect) {
+        CanvasRenderingContext2D.prototype.roundRect = function(x, y, w, h, r) {
+            if (typeof r === "number") r = [r, r, r, r];
+            const [tl, tr, br, bl] = r;
+            this.moveTo(x + tl, y);
+            this.lineTo(x + w - tr, y);
+            this.quadraticCurveTo(x + w, y, x + w, y + tr);
+            this.lineTo(x + w, y + h - br);
+            this.quadraticCurveTo(x + w, y + h, x + w - br, y + h);
+            this.lineTo(x + bl, y + h);
+            this.quadraticCurveTo(x, y + h, x, y + h - bl);
+            this.lineTo(x, y + tl);
+            this.quadraticCurveTo(x, y, x + tl, y);
+            this.closePath();
+            return this;
+        };
+    }
+})();
+</script>
+</body>
+</html>
