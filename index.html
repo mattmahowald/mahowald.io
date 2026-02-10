@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Snake | mahowald.io</title>
+    <title>Mahowalds Rule</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -166,6 +166,10 @@
         #name-input-row button:hover {
             background: rgba(0, 255, 200, 0.1);
             box-shadow: 0 0 12px rgba(0, 255, 200, 0.2);
+        }
+        @media (max-width: 600px) {
+            #sidebar { display: none; }
+            #footer { display: none; }
         }
     </style>
 </head>
@@ -371,7 +375,9 @@
 
         function resize() {
             dpr = window.devicePixelRatio || 1;
-            const maxDim = Math.min(window.innerWidth, window.innerHeight) * 0.82;
+            const isMobile = window.innerWidth <= 600;
+            const scale = isMobile ? 0.96 : 0.82;
+            const maxDim = Math.min(window.innerWidth, window.innerHeight) * scale;
             cellSize = Math.floor(maxDim / CONFIG.GRID_SIZE);
             canvasSize = cellSize * CONFIG.GRID_SIZE;
 
