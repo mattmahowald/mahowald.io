@@ -543,6 +543,12 @@
         function startGame() {
             if (waitingForName) return;
 
+            // Require name before first game
+            if (!getPlayerName()) {
+                showNameInput();
+                return;
+            }
+
             const mid = Math.floor(CONFIG.GRID_SIZE / 2);
             state.phase = 'PLAYING';
             state.snake = [{ x: mid, y: mid }, { x: mid - 1, y: mid }, { x: mid - 2, y: mid }];
@@ -993,13 +999,9 @@
                 if (state.pendingScoreSubmit && state.score > 0) {
                     state.lastScore = state.score;
                     state.pendingScoreSubmit = false;
-                    if (supabase && !getPlayerName()) {
-                        showNameInput();
-                    } else {
-                        const name = getPlayerName();
-                        if (name && supabase) {
-                            submitScore(name, state.lastScore);
-                        }
+                    const name = getPlayerName();
+                    if (name && supabase) {
+                        submitScore(name, state.lastScore);
                     }
                 }
             }
