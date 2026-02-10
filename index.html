@@ -2,8 +2,9 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Mahowalds Rule</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Snake game by mahowald.io — play in your browser">
+    <title>Mahowald's Rule</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -176,7 +177,7 @@
 <body>
     <div id="game-container">
         <div id="canvas-column">
-            <canvas id="game"></canvas>
+            <canvas id="game" role="img" aria-label="Snake game"></canvas>
             <div id="name-input-row">
                 <label>Name:</label>
                 <input type="text" id="name-input" maxlength="12" placeholder="anon" autocomplete="off" spellcheck="false">
@@ -198,7 +199,6 @@
 
         let supabase = null;
         let liveChannel = null;
-        let leaderboardData = [];
         let livePlayerCount = 0;
 
         function initSupabase() {
@@ -255,7 +255,6 @@
                     .limit(100);
                 if (!error && data) {
                     leaderboardAll = data;
-                    leaderboardData = data.slice(0, 3);
                     updateSidebarLeaderboard();
                 }
             } catch (e) {
@@ -275,25 +274,47 @@
 
         function updateSidebarLeaderboard() {
             const el = document.getElementById('sidebar-leaderboard');
-            if (leaderboardData.length === 0) {
+            const top3 = leaderboardAll.slice(0, 3);
+            if (top3.length === 0) {
                 el.classList.remove('visible');
                 return;
             }
-            let html = '<div class="lb-title">Top 3</div>';
-            leaderboardData.forEach((entry, i) => {
+            el.textContent = '';
+
+            const title = document.createElement('div');
+            title.className = 'lb-title';
+            title.textContent = 'Top 3';
+            el.appendChild(title);
+
+            top3.forEach((entry, i) => {
                 const displayName = (entry.name || 'anon').substring(0, 10);
-                const isTied = i > 0 && entry.score === leaderboardData[i - 1].score;
-                const rankStr = isTied ? '&nbsp;&nbsp;' : `${i + 1}.`;
-                html += `<div class="lb-entry"><span class="lb-rank">${rankStr}</span> <span class="lb-name">${displayName}</span> <span class="lb-score">${entry.score}</span></div>`;
+                const isTied = i > 0 && entry.score === top3[i - 1].score;
+
+                const row = document.createElement('div');
+                row.className = 'lb-entry';
+
+                const rank = document.createElement('span');
+                rank.className = 'lb-rank';
+                rank.textContent = isTied ? '  ' : `${i + 1}.`;
+
+                const name = document.createElement('span');
+                name.className = 'lb-name';
+                name.textContent = displayName;
+
+                const score = document.createElement('span');
+                score.className = 'lb-score';
+                score.textContent = entry.score;
+
+                row.append(rank, ' ', name, ' ', score);
+                el.appendChild(row);
             });
-            el.innerHTML = html;
             el.classList.add('visible');
         }
 
         // --- Leaderboard entries for canvas rendering ---
         // Shows top 10, but computes rank from full dataset (up to 100)
         function getLeaderboardEntries(playerScore) {
-            const allEntries = leaderboardAll.length > 0 ? leaderboardAll : leaderboardData;
+            const allEntries = leaderboardAll;
             const displayEntries = allEntries.slice(0, 10);
             const playerName = getPlayerName();
             let playerFound = false;
@@ -305,7 +326,13 @@
                 prevScore = entry.score;
                 const isPlayer = playerScore != null && entry.name === playerName && entry.score === playerScore && !playerFound;
                 if (isPlayer) playerFound = true;
-                return { rank: (i > 0 && entry.score === displayEntries[i - 1].score) ? '' : `${displayRank}.`, name: (entry.name || 'anon').substring(0, 10), score: entry.score, isPlayer };
+                const tied = i > 0 && entry.score === displayEntries[i - 1].score;
+                return {
+                    rank: tied ? '' : `${displayRank}.`,
+                    name: (entry.name || 'anon').substring(0, 10),
+                    score: entry.score,
+                    isPlayer,
+                };
             });
 
             // Fix first entry rank
@@ -341,17 +368,19 @@
             SPEED_INCREMENT: 0.25,
             SNAKE_CORNER_RADIUS: 0.35,
             PARTICLE_COUNT: 16,
+            DEATH_SEGMENT_DELAY: 0.035,
+            DEATH_FADE_DURATION: 0.3,
+            DEATH_LINGER: 0.5,
+            SHAKE_INTENSITY: 35,
+            TRAIL_LENGTH: 6,
+            DEATH_PARTICLES: 6,
         };
 
         // --- Colors ---
         const COLORS = {
             bg: '#0a0a1a',
-            gridLine: 'rgba(255, 255, 255, 0.03)',
             snakeHead: '#00ffc8',
-            snakeTail: '#005f4f',
-            snakeGlow: 'rgba(0, 255, 200, 0.3)',
             food: '#ff6b6b',
-            foodGlow: 'rgba(255, 107, 107, 0.25)',
             particles: ['#ff6b6b', '#ffd93d', '#ff8c42', '#00ffc8'],
             scoreText: 'rgba(255, 255, 255, 0.85)',
             highScoreText: 'rgba(255, 255, 255, 0.4)',
@@ -361,7 +390,6 @@
         };
 
         // --- Easing ---
-        function easeOutQuad(t) { return t * (2 - t); }
         function easeInBack(t) { const s = 1.70158; return t * t * ((s + 1) * t - s); }
         function lerp(a, b, t) { return a + (b - a) * t; }
         function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
@@ -372,6 +400,7 @@
         let cellSize = 0;
         let canvasSize = 0;
         let dpr = 1;
+        let gridCache = null;
 
         function resize() {
             dpr = window.devicePixelRatio || 1;
@@ -386,6 +415,7 @@
             canvas.style.width = canvasSize + 'px';
             canvas.style.height = canvasSize + 'px';
             ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            gridCache = null;
         }
         window.addEventListener('resize', resize);
         resize();
@@ -402,7 +432,6 @@
                 direction: { x: 1, y: 0 },
                 inputQueue: [],
                 food: { x: mid + 4, y: mid },
-                foodAge: 0,
                 score: 0,
                 highScore: loadHighScore(),
                 displayScore: 0,
@@ -497,12 +526,12 @@
         canvas.addEventListener('touchend', (e) => {
             e.preventDefault();
             if (!touchSwiped) {
-                if (state.phase === 'START' || state.phase === 'DEAD' || state.phase === 'DYING') startGame();
+                if (state.phase === 'START' || state.phase === 'DEAD') startGame();
             }
         }, { passive: false });
 
         canvas.addEventListener('click', () => {
-            if (state.phase === 'START' || state.phase === 'DEAD' || state.phase === 'DYING') startGame();
+            if (state.phase === 'START' || state.phase === 'DEAD') startGame();
         });
 
         // --- Name Input (floating over canvas) ---
@@ -579,7 +608,6 @@
                 return;
             }
             state.food = empty[Math.floor(Math.random() * empty.length)];
-            state.foodAge = 0;
         }
 
         function logicTick() {
@@ -593,7 +621,7 @@
 
             const tail = state.snake[state.snake.length - 1];
             state.trailHistory.unshift({ x: tail.x, y: tail.y });
-            if (state.trailHistory.length > 6) state.trailHistory.pop();
+            if (state.trailHistory.length > CONFIG.TRAIL_LENGTH) state.trailHistory.pop();
 
             const head = state.snake[0];
             const newHead = { x: head.x + state.direction.x, y: head.y + state.direction.y };
@@ -663,7 +691,7 @@
         }
 
         function spawnDeathParticles(gx, gy) {
-            for (let i = 0; i < 6; i++) {
+            for (let i = 0; i < CONFIG.DEATH_PARTICLES; i++) {
                 const angle = Math.random() * Math.PI * 2;
                 const speed = 40 + Math.random() * 80;
                 state.particles.push({
@@ -720,40 +748,50 @@
             ctx.closePath();
         }
 
-        function getSnakeColor(index, total) {
+        function snakeRGB(index, total) {
             const t = index / Math.max(total - 1, 1);
-            const r = Math.round(lerp(0, 120, t));
-            const g = Math.round(lerp(255, 40, t));
-            const b = Math.round(lerp(200, 220, t));
-            const a = lerp(1.0, 0.35, t);
+            return [Math.round(lerp(0, 120, t)), Math.round(lerp(255, 40, t)), Math.round(lerp(200, 220, t))];
+        }
+
+        function getSnakeColor(index, total) {
+            const [r, g, b] = snakeRGB(index, total);
+            const a = lerp(1.0, 0.35, index / Math.max(total - 1, 1));
             return `rgba(${r}, ${g}, ${b}, ${a})`;
         }
 
         function getSnakeGlowColor(index, total) {
-            const t = index / Math.max(total - 1, 1);
-            const r = Math.round(lerp(0, 120, t));
-            const g = Math.round(lerp(255, 40, t));
-            const b = Math.round(lerp(200, 220, t));
+            const [r, g, b] = snakeRGB(index, total);
             return `rgba(${r}, ${g}, ${b}, 0.4)`;
         }
 
-        function renderGrid() {
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.04)';
+        function buildGridCache() {
+            const offscreen = document.createElement('canvas');
+            offscreen.width = canvasSize * dpr;
+            offscreen.height = canvasSize * dpr;
+            const oc = offscreen.getContext('2d');
+            oc.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+            oc.fillStyle = 'rgba(255, 255, 255, 0.04)';
             for (let x = 1; x < CONFIG.GRID_SIZE; x++) {
                 for (let y = 1; y < CONFIG.GRID_SIZE; y++) {
-                    ctx.beginPath();
-                    ctx.arc(x * cellSize, y * cellSize, 1, 0, Math.PI * 2);
-                    ctx.fill();
+                    oc.beginPath();
+                    oc.arc(x * cellSize, y * cellSize, 1, 0, Math.PI * 2);
+                    oc.fill();
                 }
             }
 
-            ctx.save();
-            ctx.strokeStyle = 'rgba(0, 255, 200, 0.08)';
-            ctx.shadowColor = 'rgba(0, 255, 200, 0.1)';
-            ctx.shadowBlur = 15;
-            ctx.lineWidth = 1;
-            ctx.strokeRect(0.5, 0.5, canvasSize - 1, canvasSize - 1);
-            ctx.restore();
+            oc.strokeStyle = 'rgba(0, 255, 200, 0.08)';
+            oc.shadowColor = 'rgba(0, 255, 200, 0.1)';
+            oc.shadowBlur = 15;
+            oc.lineWidth = 1;
+            oc.strokeRect(0.5, 0.5, canvasSize - 1, canvasSize - 1);
+
+            return offscreen;
+        }
+
+        function renderGrid() {
+            if (!gridCache) gridCache = buildGridCache();
+            ctx.drawImage(gridCache, 0, 0, canvasSize, canvasSize);
         }
 
         function renderTrail() {
@@ -917,11 +955,12 @@
         }
 
         function renderDyingSnake(dt) {
-            const segmentDelay = 0.035;
+            const segDelay = CONFIG.DEATH_SEGMENT_DELAY;
+            const fadeDur = CONFIG.DEATH_FADE_DURATION;
             state.deathTimer += dt;
 
             while (state.deathSegmentsSpawned < state.snake.length &&
-                   state.deathTimer >= state.deathSegmentsSpawned * segmentDelay) {
+                   state.deathTimer >= state.deathSegmentsSpawned * segDelay) {
                 spawnDeathParticles(
                     state.snake[state.deathSegmentsSpawned].x,
                     state.snake[state.deathSegmentsSpawned].y
@@ -935,16 +974,16 @@
             const total = state.snake.length;
 
             for (let i = 0; i < total - 1; i++) {
-                const segTimeA = state.deathTimer - i * segmentDelay;
-                const segTimeB = state.deathTimer - (i + 1) * segmentDelay;
-                if (segTimeA >= 0.3 || segTimeB >= 0.3) continue;
+                const segTimeA = state.deathTimer - i * segDelay;
+                const segTimeB = state.deathTimer - (i + 1) * segDelay;
+                if (segTimeA >= fadeDur || segTimeB >= fadeDur) continue;
 
                 const ax = state.snake[i].x * cellSize + cellSize / 2;
                 const ay = state.snake[i].y * cellSize + cellSize / 2;
                 const bx = state.snake[i + 1].x * cellSize + cellSize / 2;
                 const by = state.snake[i + 1].y * cellSize + cellSize / 2;
-                const alphaA = segTimeA < 0 ? 1 : Math.max(0, 1 - segTimeA / 0.3);
-                const alpha = Math.min(alphaA, segTimeB < 0 ? 1 : Math.max(0, 1 - segTimeB / 0.3));
+                const alphaA = segTimeA < 0 ? 1 : Math.max(0, 1 - segTimeA / fadeDur);
+                const alpha = Math.min(alphaA, segTimeB < 0 ? 1 : Math.max(0, 1 - segTimeB / fadeDur));
 
                 ctx.save();
                 ctx.globalAlpha = alpha;
@@ -961,10 +1000,10 @@
             }
 
             for (let i = 0; i < total; i++) {
-                const segTime = state.deathTimer - i * segmentDelay;
-                if (segTime >= 0.3) continue;
+                const segTime = state.deathTimer - i * segDelay;
+                if (segTime >= fadeDur) continue;
 
-                const scale = segTime < 0 ? 1 : Math.max(0, 1 - easeInBack(clamp(segTime / 0.3, 0, 1)));
+                const scale = segTime < 0 ? 1 : Math.max(0, 1 - easeInBack(clamp(segTime / fadeDur, 0, 1)));
                 const alpha = segTime < 0 ? 1 : scale;
                 const cx = state.snake[i].x * cellSize + cellSize / 2;
                 const cy = state.snake[i].y * cellSize + cellSize / 2;
@@ -993,7 +1032,7 @@
                 ctx.restore();
             }
 
-            if (state.deathTimer > total * segmentDelay + 0.5) {
+            if (state.deathTimer > total * segDelay + CONFIG.DEATH_LINGER) {
                 state.phase = 'DEAD';
                 // Submit score now so leaderboard is up to date on game over screen
                 if (state.pendingScoreSubmit && state.score > 0) {
@@ -1087,14 +1126,15 @@
 
         function renderScorePopups() {
             for (const p of state.scorePopups) {
+                ctx.save();
                 ctx.globalAlpha = clamp(p.life, 0, 1);
                 ctx.fillStyle = '#ffd93d';
                 ctx.font = `bold ${Math.max(12, cellSize * 0.7)}px "SF Mono", "Fira Code", "Courier New", monospace`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
                 ctx.fillText('+1', p.x, p.y);
+                ctx.restore();
             }
-            ctx.globalAlpha = 1;
         }
 
         function renderHUD() {
@@ -1230,7 +1270,6 @@
                 ctx.stroke();
                 ctx.restore();
             }
-            ctx.globalAlpha = 1;
 
             const titleSize = Math.max(24, cellSize * 2);
             const titleY = canvasSize * 0.18 + Math.sin(time * 1.5) * 3;
@@ -1263,13 +1302,14 @@
             renderCanvasLeaderboard(canvasSize * 0.38, null);
 
             const promptAlpha = 0.3 + Math.sin(time * 2.5) * 0.35 + 0.35;
+            ctx.save();
             ctx.globalAlpha = promptAlpha;
             const promptSize = Math.max(11, cellSize * 0.5);
             ctx.font = `${promptSize}px "SF Mono", "Fira Code", "Courier New", monospace`;
             ctx.fillStyle = COLORS.scoreText;
             ctx.textAlign = 'center';
-            ctx.fillText('click to start', centerX, canvasSize * 0.9);
-            ctx.globalAlpha = 1;
+            ctx.fillText('tap or click to play', centerX, canvasSize * 0.9);
+            ctx.restore();
         }
 
         function renderGameOver(time) {
@@ -1306,13 +1346,14 @@
             renderCanvasLeaderboard(canvasSize * 0.35, state.score);
 
             const promptAlpha = 0.3 + Math.sin(time * 2.5) * 0.35 + 0.35;
+            ctx.save();
             ctx.globalAlpha = promptAlpha;
             const promptSize = Math.max(11, cellSize * 0.5);
             ctx.font = `${promptSize}px "SF Mono", "Fira Code", "Courier New", monospace`;
             ctx.fillStyle = COLORS.scoreText;
             ctx.textAlign = 'center';
-            ctx.fillText('click to restart', centerX, canvasSize * 0.9);
-            ctx.globalAlpha = 1;
+            ctx.fillText('tap or click to restart', centerX, canvasSize * 0.9);
+            ctx.restore();
         }
 
         // --- Main Loop ---
@@ -1354,7 +1395,7 @@
             renderGrid();
 
             if (state.screenShake > 0) {
-                const intensity = state.screenShake * 35;
+                const intensity = state.screenShake * CONFIG.SHAKE_INTENSITY;
                 ctx.translate(
                     (Math.random() - 0.5) * intensity,
                     (Math.random() - 0.5) * intensity
