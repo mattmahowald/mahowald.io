@@ -1,0 +1,880 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>WORDLE - mahowald.io</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: #0a0a1a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: "SF Mono", "Fira Code", "Courier New", monospace;
+    -webkit-user-select: none;
+    user-select: none;
+}
+canvas {
+    display: block;
+    border-radius: 4px;
+    box-shadow:
+        0 0 40px rgba(0, 255, 200, 0.08),
+        0 0 80px rgba(0, 255, 200, 0.04),
+        0 0 120px rgba(0, 255, 200, 0.02),
+        0 4px 30px rgba(0, 0, 0, 0.6);
+}
+.back-link {
+    position: fixed; top: 16px; left: 16px;
+    color: #00ffc8; text-decoration: none;
+    font-family: "SF Mono", "Fira Code", "Courier New", monospace;
+    font-size: 14px; z-index: 100; opacity: 0.7; transition: opacity 0.2s;
+}
+.back-link:hover { opacity: 1; }
+</style>
+</head>
+<body>
+<a href="/" class="back-link">&larr; BACK</a>
+<canvas id="c"></canvas>
+<script>
+(function() { "use strict";
+
+// --- Word list (200+ common 5-letter words) ---
+const WORDS = [
+    "about","above","abuse","actor","acute","admit","adopt","adult","after","again",
+    "agent","agree","ahead","alarm","album","alert","alien","align","alike","alive",
+    "alley","allow","alone","along","alter","ample","angel","anger","angle","angry",
+    "apart","apple","apply","arena","argue","arise","armor","aroma","array","aside",
+    "asset","audio","audit","avoid","awake","award","aware","awful","badge","badly",
+    "baker","basic","basis","beach","being","below","bench","berry","birth","black",
+    "blade","blame","blank","blast","blaze","bleed","blend","bless","blind","block",
+    "blood","bloom","blown","board","bonus","boost","bound","brain","brand","brave",
+    "bread","break","breed","brick","bride","brief","bring","broad","broke","brook",
+    "brown","brush","build","bunch","burst","buyer","cabin","cable","camel","candy",
+    "carry","catch","cause","cedar","chain","chair","chalk","champ","chaos","charm",
+    "chart","chase","cheap","check","chess","chest","chief","child","chill","china",
+    "chord","claim","clash","class","clean","clear","clerk","click","cliff","climb",
+    "cling","clock","clone","close","cloth","cloud","coach","coast","coral","couch",
+    "could","count","court","cover","crack","craft","crane","crash","crazy","cream",
+    "creep","crime","crisp","cross","crowd","crown","cruel","crush","curve","cycle",
+    "daily","dance","death","debug","delay","dense","depth","derby","devil","diary",
+    "dirty","dodge","doing","donor","doubt","dough","draft","drain","drake","drama",
+    "drank","drape","drawn","dread","dream","dress","dried","drift","drill","drink",
+    "drive","drone","drove","drown","dryer","dying","eager","early","earth","eight",
+    "elect","elite","email","empty","enemy","enjoy","enter","equal","error","essay",
+    "event","every","exact","exams","exist","extra","fable","facet","faith","false",
+    "fancy","fatal","fault","feast","fence","ferry","fever","fiber","field","fifth",
+    "fifty","fight","final","first","fixed","flame","flash","flesh","float","flood",
+    "floor","flora","flour","fluid","flush","flute","focal","focus","force","forge",
+    "forth","forum","found","frame","frank","fraud","fresh","front","frost","fruit",
+    "fully","funny","ghost","giant","given","gland","glass","gleam","globe","gloom",
+    "glory","glove","going","grace","grade","grain","grand","grant","grape","graph",
+    "grasp","grass","grave","great","green","greet","grief","grill","grind","groan",
+    "groom","gross","group","grove","grown","guard","guess","guest","guide","guild",
+    "guilt","piano","habit","happy","harsh","haste","haven","heart","heavy","hedge",
+    "hence","herbs","honey","honor","horse","hotel","house","human","humor","hurry",
+    "hyper","ideal","image","imply","index","indie","inner","input","irony","ivory",
+    "jewel","joint","joker","judge","juice","juicy","knife","knock","known","label",
+    "lance","large","laser","later","laugh","layer","learn","least","leave","legal",
+    "lemon","level","light","limit","linen","links","liver","local","lodge","logic",
+    "loose","lover","lower","loyal","lucky","lunar","lunch","lying","magic","major",
+    "maker","manor","maple","march","match","mayor","meant","media","mercy","merit",
+    "metal","meter","might","minor","minus","model","money","month","moral","motor",
+    "mount","mouse","mouth","movie","music","naive","nerve","never","night","noble",
+    "noise","north","novel","nurse","occur","ocean","offer","often","olive","onset",
+    "opera","orbit","order","other","ought","outer","owner","oxide","ozone","paint",
+    "panel","panic","paper","patch","pause","peace","peach","pearl","penny","perch",
+    "phase","phone","photo","piece","pilot","pinch","pitch","pixel","place","plain",
+    "plane","plant","plate","plaza","plead","plumb","plume","plump","point","polar",
+    "pound","power","press","price","pride","prime","prism","print","prior","prize",
+    "proof","proud","prove","proxy","pulse","punch","pupil","purse","query","queue",
+    "quiet","quote","radar","radio","raise","rally","ranch","range","rapid","ratio",
+    "reach","react","realm","rebel","refer","reign","relax","reply","rider","ridge",
+    "rifle","right","rigid","risky","rival","river","robin","robot","rocky","rouge",
+    "rough","round","route","royal","rugby","ruler","rural","saint","salad","sauce",
+    "scale","scare","scene","scope","score","sense","serve","setup","seven","shade",
+    "shall","shame","shape","share","shark","sharp","shelf","shell","shift","shine",
+    "shirt","shock","shore","short","shout","sight","since","sixth","sixty","sized",
+    "skill","skull","slate","slave","sleep","slice","slide","slope","smart","smell",
+    "smile","smoke","snake","solar","solid","solve","sorry","sound","south","space",
+    "spare","speak","speed","spend","spent","spice","spine","spite","split","spoke",
+    "spoon","sport","spray","squad","stack","staff","stage","stain","stair","stake",
+    "stale","stall","stamp","stand","stare","stark","start","state","stave","stays",
+    "steal","steam","steel","steep","steer","stems","stern","stick","still","stock",
+    "stone","stood","store","storm","story","stout","stove","strap","straw","strip",
+    "stuck","study","stuff","style","sugar","suite","super","surge","swamp","swear",
+    "sweat","sweep","sweet","swept","swift","swing","sword","swore","sworn","syrup",
+    "table","taste","teach","teeth","theme","there","thick","thing","think","third",
+    "thorn","those","three","threw","throw","thumb","tight","timer","tired","title",
+    "today","token","topic","total","touch","tough","tower","toxic","trace","track",
+    "trade","trail","train","trait","trash","treat","trend","trial","tribe","trick",
+    "tried","troop","trout","truck","truly","trump","trunk","trust","truth","tumor",
+    "twice","twist","ultra","uncle","under","unify","union","unite","unity","until",
+    "upper","upset","urban","usage","usual","utter","valid","value","valve","vapor",
+    "vault","verse","video","vigor","vinyl","viral","virus","visit","vivid","vocal",
+    "vodka","voice","voter","wages","waste","watch","water","weary","weave","weigh",
+    "weird","whale","wheat","wheel","where","which","while","white","whole","whose",
+    "widow","width","witch","woman","world","worry","worse","worst","worth","would",
+    "wound","wreck","write","wrong","wrote","yacht","young","yours","youth","zebra"
+];
+
+// --- Colors ---
+const BG        = "#0a0a1a";
+const CYAN      = "#00ffc8";
+const PURPLE    = "#a855f7";
+const YELLOW    = "#ffd93d";
+const RED       = "#ff6b6b";
+const GREEN     = "#22c55e";
+const GRAY_TILE = "rgba(255,255,255,0.15)";
+const WHITE     = "#e2e8f0";
+const DIM       = "rgba(255,255,255,0.4)";
+const TILE_BORDER = "rgba(255,255,255,0.2)";
+
+// --- Game phases ---
+const PHASE_START   = 0;
+const PHASE_PLAYING = 1;
+const PHASE_WIN     = 2;
+const PHASE_LOSE    = 3;
+
+// --- Game state ---
+let phase = PHASE_START;
+let targetWord = "";
+let guesses = [];       // completed guesses: array of {word, results}
+let currentGuess = "";  // letters typed so far
+let currentRow = 0;
+let flipQueue = [];     // {row, col, startTime, duration}
+let flipResults = null; // results being revealed
+let flipRow = -1;
+let flipDone = false;
+let shakeTime = 0;
+let shakeRow = -1;
+let messageText = "";
+let messageTime = 0;
+let keyColors = {};     // letter -> color
+let particles = [];
+let winTime = 0;
+let loseTime = 0;
+let stats = loadStats();
+let startPulse = 0;
+
+// --- Layout constants ---
+const ROWS = 6;
+const COLS = 5;
+const BASE_W = 400;
+const BASE_H = 620;
+
+// --- Canvas setup ---
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+let dpr = 1;
+let W = BASE_W, H = BASE_H;
+
+// Layout measurements (recomputed on resize)
+let tileSize, tileGap, gridX, gridY, gridW, gridH;
+let kbY, kbRowH, kbKeyW, kbKeyH, kbGap;
+let kbLayout, kbRects; // keyboard layout and hit rects
+
+const KB_ROWS = [
+    ["Q","W","E","R","T","Y","U","I","O","P"],
+    ["A","S","D","F","G","H","J","K","L"],
+    ["ENT","Z","X","C","V","B","N","M","DEL"]
+];
+
+function resize() {
+    dpr = window.devicePixelRatio || 1;
+    const maxW = window.innerWidth - 32;
+    const maxH = window.innerHeight - 32;
+    const scale = Math.min(maxW / BASE_W, maxH / BASE_H, 1.2);
+    W = Math.floor(BASE_W * scale);
+    H = Math.floor(BASE_H * scale);
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    canvas.style.width = W + "px";
+    canvas.style.height = H + "px";
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    computeLayout();
+}
+
+function computeLayout() {
+    // Tile grid
+    tileGap = Math.round(W * 0.015);
+    tileSize = Math.floor((W - tileGap * 6) / 5 * 0.82);
+    tileSize = Math.min(tileSize, Math.floor(H * 0.078));
+    gridW = tileSize * COLS + tileGap * (COLS - 1);
+    gridH = tileSize * ROWS + tileGap * (ROWS - 1);
+    gridX = Math.floor((W - gridW) / 2);
+    gridY = Math.floor(H * 0.095);
+
+    // Keyboard
+    kbGap = Math.round(W * 0.012);
+    kbKeyH = Math.floor(H * 0.063);
+    kbY = gridY + gridH + Math.floor(H * 0.04);
+    kbKeyW = Math.floor((W - kbGap * 11) / 10);
+
+    // Build hit rects
+    kbRects = [];
+    for (let r = 0; r < KB_ROWS.length; r++) {
+        const row = KB_ROWS[r];
+        let totalW = 0;
+        const widths = row.map(k => {
+            if (k === "ENT" || k === "DEL") return Math.floor(kbKeyW * 1.4);
+            return kbKeyW;
+        });
+        totalW = widths.reduce((a,b) => a + b, 0) + kbGap * (row.length - 1);
+        let x = Math.floor((W - totalW) / 2);
+        const y = kbY + r * (kbKeyH + kbGap);
+        for (let c = 0; c < row.length; c++) {
+            kbRects.push({
+                key: row[c],
+                x: x,
+                y: y,
+                w: widths[c],
+                h: kbKeyH
+            });
+            x += widths[c] + kbGap;
+        }
+    }
+}
+
+window.addEventListener("resize", resize);
+resize();
+
+// --- Stats persistence ---
+function loadStats() {
+    try {
+        const s = JSON.parse(localStorage.getItem("wordle_stats"));
+        if (s && typeof s.played === "number") return s;
+    } catch(e) {}
+    return { played: 0, won: 0, streak: 0, maxStreak: 0 };
+}
+
+function saveStats() {
+    try {
+        localStorage.setItem("wordle_stats", JSON.stringify(stats));
+    } catch(e) {}
+}
+
+// --- Game logic ---
+function pickWord() {
+    return WORDS[Math.floor(Math.random() * WORDS.length)].toUpperCase();
+}
+
+function checkGuess(guess, target) {
+    // Returns array of 5: 'green', 'yellow', 'gray'
+    const result = ["gray","gray","gray","gray","gray"];
+    const tArr = target.split("");
+    const gArr = guess.split("");
+    // Pass 1: greens
+    for (let i = 0; i < 5; i++) {
+        if (gArr[i] === tArr[i]) {
+            result[i] = "green";
+            tArr[i] = null;
+            gArr[i] = null;
+        }
+    }
+    // Pass 2: yellows
+    for (let i = 0; i < 5; i++) {
+        if (gArr[i] === null) continue;
+        const idx = tArr.indexOf(gArr[i]);
+        if (idx !== -1) {
+            result[i] = "yellow";
+            tArr[idx] = null;
+        }
+    }
+    return result;
+}
+
+function isValidWord(word) {
+    return WORDS.indexOf(word.toLowerCase()) !== -1;
+}
+
+function startGame() {
+    phase = PHASE_PLAYING;
+    targetWord = pickWord();
+    guesses = [];
+    currentGuess = "";
+    currentRow = 0;
+    flipQueue = [];
+    flipResults = null;
+    flipRow = -1;
+    flipDone = false;
+    shakeTime = 0;
+    shakeRow = -1;
+    messageText = "";
+    messageTime = 0;
+    keyColors = {};
+    particles = [];
+    winTime = 0;
+    loseTime = 0;
+}
+
+function submitGuess() {
+    if (currentGuess.length !== 5) {
+        triggerShake();
+        showMessage("Not enough letters");
+        return;
+    }
+    if (!isValidWord(currentGuess)) {
+        triggerShake();
+        showMessage("Not in word list");
+        return;
+    }
+    const results = checkGuess(currentGuess, targetWord);
+    // Start flip animation
+    flipResults = { word: currentGuess, results: results };
+    flipRow = currentRow;
+    flipDone = false;
+    const now = performance.now();
+    flipQueue = [];
+    for (let i = 0; i < 5; i++) {
+        flipQueue.push({
+            col: i,
+            startTime: now + i * 220,
+            duration: 400,
+            phase: 0 // 0=waiting, 1=shrinking, 2=growing, 3=done
+        });
+    }
+}
+
+function finalizeGuess() {
+    const fr = flipResults;
+    guesses.push({ word: fr.word, results: fr.results });
+
+    // Update keyboard colors
+    for (let i = 0; i < 5; i++) {
+        const letter = fr.word[i];
+        const res = fr.results[i];
+        const current = keyColors[letter];
+        // Priority: green > yellow > gray
+        if (res === "green") {
+            keyColors[letter] = GREEN;
+        } else if (res === "yellow" && current !== GREEN) {
+            keyColors[letter] = YELLOW;
+        } else if (!current) {
+            keyColors[letter] = GRAY_TILE;
+        }
+    }
+
+    currentRow++;
+    currentGuess = "";
+    flipResults = null;
+    flipRow = -1;
+    flipQueue = [];
+
+    // Check win/lose
+    if (fr.results.every(r => r === "green")) {
+        phase = PHASE_WIN;
+        winTime = performance.now();
+        stats.played++;
+        stats.won++;
+        stats.streak++;
+        if (stats.streak > stats.maxStreak) stats.maxStreak = stats.streak;
+        saveStats();
+        spawnWinParticles();
+    } else if (currentRow >= ROWS) {
+        phase = PHASE_LOSE;
+        loseTime = performance.now();
+        stats.played++;
+        stats.streak = 0;
+        saveStats();
+    }
+}
+
+function triggerShake() {
+    shakeRow = currentRow;
+    shakeTime = performance.now();
+}
+
+function showMessage(text) {
+    messageText = text;
+    messageTime = performance.now();
+}
+
+function spawnWinParticles() {
+    for (let i = 0; i < 80; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 1.5 + Math.random() * 4;
+        particles.push({
+            x: W / 2 + (Math.random() - 0.5) * 100,
+            y: H * 0.35,
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed - 2,
+            life: 1,
+            decay: 0.005 + Math.random() * 0.012,
+            size: 2 + Math.random() * 4,
+            color: [CYAN, GREEN, YELLOW, PURPLE][Math.floor(Math.random() * 4)]
+        });
+    }
+}
+
+// --- Input handling ---
+function handleKey(key) {
+    if (phase === PHASE_START) {
+        startGame();
+        return;
+    }
+    if (phase === PHASE_WIN || phase === PHASE_LOSE) {
+        startGame();
+        return;
+    }
+    if (phase !== PHASE_PLAYING) return;
+    // Block input during flip animation
+    if (flipQueue.length > 0) return;
+
+    if (key === "BACKSPACE" || key === "DEL") {
+        if (currentGuess.length > 0) {
+            currentGuess = currentGuess.slice(0, -1);
+        }
+    } else if (key === "ENTER" || key === "ENT") {
+        submitGuess();
+    } else if (/^[A-Z]$/.test(key) && currentGuess.length < 5) {
+        currentGuess += key;
+    }
+}
+
+document.addEventListener("keydown", function(e) {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    let key = e.key.toUpperCase();
+    if (key === "BACKSPACE" || key === "DELETE") key = "BACKSPACE";
+    if (key === "ENTER") key = "ENTER";
+    if (key === "BACKSPACE" || key === "ENTER" || /^[A-Z]$/.test(key)) {
+        e.preventDefault();
+        handleKey(key);
+    }
+});
+
+function getCanvasPos(e) {
+    const rect = canvas.getBoundingClientRect();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    return {
+        x: clientX - rect.left,
+        y: clientY - rect.top
+    };
+}
+
+function handlePointer(e) {
+    e.preventDefault();
+    const pos = getCanvasPos(e);
+    // Check keyboard hit rects
+    for (const kr of kbRects) {
+        if (pos.x >= kr.x && pos.x <= kr.x + kr.w &&
+            pos.y >= kr.y && pos.y <= kr.y + kr.h) {
+            let key = kr.key;
+            if (key === "DEL") key = "BACKSPACE";
+            if (key === "ENT") key = "ENTER";
+            handleKey(key);
+            return;
+        }
+    }
+    // Click anywhere else on start/end screens
+    if (phase === PHASE_START || phase === PHASE_WIN || phase === PHASE_LOSE) {
+        handleKey("ENTER");
+    }
+}
+
+canvas.addEventListener("mousedown", handlePointer);
+canvas.addEventListener("touchstart", handlePointer, { passive: false });
+
+// --- Drawing ---
+function colorForResult(res) {
+    if (res === "green") return GREEN;
+    if (res === "yellow") return YELLOW;
+    return GRAY_TILE;
+}
+
+function drawTile(x, y, w, h, letter, bgColor, borderColor, scaleY) {
+    scaleY = scaleY !== undefined ? scaleY : 1;
+    ctx.save();
+    if (scaleY !== 1) {
+        const cy = y + h / 2;
+        ctx.translate(0, cy);
+        ctx.scale(1, scaleY);
+        ctx.translate(0, -cy);
+    }
+    // Background
+    ctx.fillStyle = bgColor || BG;
+    ctx.beginPath();
+    roundRect(ctx, x, y, w, h, 4);
+    ctx.fill();
+    // Border
+    ctx.strokeStyle = borderColor || TILE_BORDER;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    roundRect(ctx, x, y, w, h, 4);
+    ctx.stroke();
+    // Letter
+    if (letter && Math.abs(scaleY) > 0.05) {
+        ctx.fillStyle = WHITE;
+        ctx.font = "bold " + Math.floor(w * 0.55) + "px 'SF Mono', 'Fira Code', 'Courier New', monospace";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(letter, x + w / 2, y + h / 2 + 1);
+    }
+    ctx.restore();
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+}
+
+function drawGrid(now) {
+    for (let row = 0; row < ROWS; row++) {
+        let shakeOff = 0;
+        if (shakeRow === row && shakeTime > 0) {
+            const elapsed = now - shakeTime;
+            if (elapsed < 500) {
+                shakeOff = Math.sin(elapsed * 0.05) * 5 * (1 - elapsed / 500);
+            } else {
+                shakeRow = -1;
+                shakeTime = 0;
+            }
+        }
+
+        for (let col = 0; col < COLS; col++) {
+            const x = gridX + col * (tileSize + tileGap) + shakeOff;
+            const y = gridY + row * (tileSize + tileGap);
+
+            if (row < guesses.length) {
+                // Completed guess
+                const g = guesses[row];
+                const bg = colorForResult(g.results[col]);
+                drawTile(x, y, tileSize, tileSize, g.word[col], bg, bg, 1);
+            } else if (row === flipRow && flipResults) {
+                // Currently flipping row
+                const fq = flipQueue[col];
+                let scaleY = 1;
+                let bg = BG;
+                let border = TILE_BORDER;
+                let letter = flipResults.word[col];
+
+                if (fq) {
+                    const elapsed = now - fq.startTime;
+                    if (elapsed < 0) {
+                        // Waiting - show letter with border
+                        border = DIM;
+                    } else if (elapsed < fq.duration / 2) {
+                        // Shrinking
+                        const t = elapsed / (fq.duration / 2);
+                        scaleY = 1 - t;
+                        border = DIM;
+                    } else if (elapsed < fq.duration) {
+                        // Growing with color
+                        const t = (elapsed - fq.duration / 2) / (fq.duration / 2);
+                        scaleY = t;
+                        bg = colorForResult(flipResults.results[col]);
+                        border = bg;
+                    } else {
+                        // Done
+                        bg = colorForResult(flipResults.results[col]);
+                        border = bg;
+                        fq.done = true;
+                    }
+                }
+
+                drawTile(x, y, tileSize, tileSize, letter, bg, border, scaleY);
+            } else if (row === currentRow && col < currentGuess.length) {
+                // Current guess letters
+                const letter = currentGuess[col];
+                // Pop animation
+                drawTile(x, y, tileSize, tileSize, letter, BG, DIM, 1);
+            } else {
+                // Empty tile
+                drawTile(x, y, tileSize, tileSize, "", BG, TILE_BORDER, 1);
+            }
+        }
+    }
+
+    // Check if flip animation is complete
+    if (flipQueue.length > 0 && flipQueue.every(f => f.done)) {
+        finalizeGuess();
+    }
+}
+
+function drawKeyboard() {
+    for (const kr of kbRects) {
+        const letter = kr.key;
+        let bg = "rgba(255,255,255,0.12)";
+        let textColor = WHITE;
+
+        if (letter !== "ENT" && letter !== "DEL" && keyColors[letter]) {
+            bg = keyColors[letter];
+            if (bg === GRAY_TILE) {
+                bg = "rgba(255,255,255,0.06)";
+                textColor = "rgba(255,255,255,0.3)";
+            }
+        }
+
+        ctx.fillStyle = bg;
+        ctx.beginPath();
+        roundRect(ctx, kr.x, kr.y, kr.w, kr.h, 4);
+        ctx.fill();
+
+        ctx.fillStyle = textColor;
+        const fontSize = (letter === "ENT" || letter === "DEL")
+            ? Math.floor(kbKeyH * 0.35)
+            : Math.floor(kbKeyH * 0.45);
+        ctx.font = "bold " + fontSize + "px 'SF Mono', 'Fira Code', 'Courier New', monospace";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        const label = letter === "DEL" ? "\u232B" : letter;
+        ctx.fillText(label, kr.x + kr.w / 2, kr.y + kr.h / 2 + 1);
+    }
+}
+
+function drawMessage(now) {
+    if (!messageText || !messageTime) return;
+    const elapsed = now - messageTime;
+    if (elapsed > 1800) {
+        messageText = "";
+        messageTime = 0;
+        return;
+    }
+    let alpha = 1;
+    if (elapsed > 1300) alpha = 1 - (elapsed - 1300) / 500;
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    const fontSize = Math.floor(W * 0.035);
+    ctx.font = "bold " + fontSize + "px 'SF Mono', 'Fira Code', 'Courier New', monospace";
+    ctx.textAlign = "center";
+    const msgW = ctx.measureText(messageText).width + 30;
+    const msgH = fontSize + 16;
+    const mx = (W - msgW) / 2;
+    const my = gridY - msgH - 8;
+
+    ctx.fillStyle = "rgba(30,30,50,0.95)";
+    ctx.beginPath();
+    roundRect(ctx, mx, my, msgW, msgH, 6);
+    ctx.fill();
+
+    ctx.fillStyle = WHITE;
+    ctx.textBaseline = "middle";
+    ctx.fillText(messageText, W / 2, my + msgH / 2);
+    ctx.restore();
+}
+
+function drawParticles(now) {
+    for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += 0.06;
+        p.life -= p.decay;
+        if (p.life <= 0) {
+            particles.splice(i, 1);
+            continue;
+        }
+        ctx.save();
+        ctx.globalAlpha = p.life;
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+}
+
+function drawTitle(now) {
+    const fontSize = Math.floor(W * 0.09);
+    ctx.font = "bold " + fontSize + "px 'SF Mono', 'Fira Code', 'Courier New', monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+
+    // Glow
+    ctx.save();
+    ctx.shadowColor = CYAN;
+    ctx.shadowBlur = 20;
+    ctx.fillStyle = CYAN;
+    ctx.fillText("WORDLE", W / 2, H * 0.22);
+    ctx.restore();
+
+    ctx.fillStyle = CYAN;
+    ctx.fillText("WORDLE", W / 2, H * 0.22);
+
+    // Subtitle
+    const subSize = Math.floor(W * 0.032);
+    ctx.font = subSize + "px 'SF Mono', 'Fira Code', 'Courier New', monospace";
+    ctx.fillStyle = DIM;
+    ctx.fillText("Guess the 5-letter word in 6 tries", W / 2, H * 0.30);
+
+    // Rules
+    const ruleSize = Math.floor(W * 0.028);
+    ctx.font = ruleSize + "px 'SF Mono', 'Fira Code', 'Courier New', monospace";
+    const rules = [
+        { color: GREEN,  text: "GREEN  = correct spot" },
+        { color: YELLOW, text: "YELLOW = wrong spot" },
+        { color: DIM,    text: "GRAY   = not in word" }
+    ];
+    for (let i = 0; i < rules.length; i++) {
+        const ry = H * 0.38 + i * (ruleSize + 12);
+        // Color swatch
+        ctx.fillStyle = rules[i].color;
+        const swatchSize = ruleSize;
+        ctx.fillRect(W * 0.18, ry - swatchSize / 2, swatchSize, swatchSize);
+        // Text
+        ctx.fillStyle = "rgba(255,255,255,0.6)";
+        ctx.textAlign = "left";
+        ctx.fillText(rules[i].text, W * 0.18 + swatchSize + 10, ry + 1);
+    }
+
+    // Stats
+    if (stats.played > 0) {
+        const sy = H * 0.58;
+        ctx.textAlign = "center";
+        ctx.font = "bold " + Math.floor(W * 0.06) + "px 'SF Mono', 'Fira Code', 'Courier New', monospace";
+        ctx.fillStyle = PURPLE;
+        const statW = W / 4;
+        const labels = ["Played", "Win %", "Streak", "Max"];
+        const values = [
+            stats.played,
+            stats.played > 0 ? Math.round(stats.won / stats.played * 100) : 0,
+            stats.streak,
+            stats.maxStreak
+        ];
+        for (let i = 0; i < 4; i++) {
+            const sx = statW * i + statW / 2;
+            ctx.fillStyle = CYAN;
+            ctx.fillText(values[i], sx, sy);
+            ctx.font = Math.floor(W * 0.025) + "px 'SF Mono', 'Fira Code', 'Courier New', monospace";
+            ctx.fillStyle = DIM;
+            ctx.fillText(labels[i], sx, sy + Math.floor(W * 0.055));
+            ctx.font = "bold " + Math.floor(W * 0.06) + "px 'SF Mono', 'Fira Code', 'Courier New', monospace";
+        }
+    }
+
+    // Start prompt
+    const pulse = 0.5 + 0.5 * Math.sin(now * 0.003);
+    ctx.globalAlpha = 0.5 + pulse * 0.5;
+    ctx.textAlign = "center";
+    ctx.font = Math.floor(W * 0.032) + "px 'SF Mono', 'Fira Code', 'Courier New', monospace";
+    ctx.fillStyle = CYAN;
+    ctx.fillText("[ press any key to play ]", W / 2, H * 0.82);
+    ctx.globalAlpha = 1;
+}
+
+function drawWinScreen(now) {
+    const elapsed = now - winTime;
+
+    drawGrid(now);
+    drawKeyboard();
+    drawParticles(now);
+
+    if (elapsed > 800) {
+        const fadeIn = Math.min((elapsed - 800) / 600, 1);
+        ctx.save();
+        ctx.globalAlpha = fadeIn;
+
+        const fontSize = Math.floor(W * 0.08);
+        ctx.font = "bold " + fontSize + "px 'SF Mono', 'Fira Code', 'Courier New', monospace";
+        ctx.textAlign = "center";
+
+        // Glow
+        ctx.shadowColor = GREEN;
+        ctx.shadowBlur = 25;
+        ctx.fillStyle = GREEN;
+        ctx.fillText("BRILLIANT!", W / 2, H * 0.04 + fontSize / 2);
+        ctx.shadowBlur = 0;
+
+        const subSize = Math.floor(W * 0.03);
+        ctx.font = subSize + "px 'SF Mono', 'Fira Code', 'Courier New', monospace";
+        ctx.fillStyle = DIM;
+        ctx.fillText(guesses.length + "/6 guesses", W / 2, H * 0.04 + fontSize + 8);
+
+        if (elapsed > 2000) {
+            const fadeIn2 = Math.min((elapsed - 2000) / 600, 1);
+            ctx.globalAlpha = fadeIn2;
+            const pulse = 0.5 + 0.5 * Math.sin(now * 0.003);
+            ctx.globalAlpha = fadeIn2 * (0.5 + pulse * 0.5);
+            ctx.fillStyle = CYAN;
+            ctx.font = Math.floor(W * 0.028) + "px 'SF Mono', 'Fira Code', 'Courier New', monospace";
+            ctx.fillText("[ press any key to play again ]", W / 2, H * 0.96);
+        }
+        ctx.restore();
+    }
+}
+
+function drawLoseScreen(now) {
+    const elapsed = now - loseTime;
+
+    drawGrid(now);
+    drawKeyboard();
+
+    if (elapsed > 400) {
+        const fadeIn = Math.min((elapsed - 400) / 600, 1);
+        ctx.save();
+        ctx.globalAlpha = fadeIn;
+
+        const fontSize = Math.floor(W * 0.06);
+        ctx.font = "bold " + fontSize + "px 'SF Mono', 'Fira Code', 'Courier New', monospace";
+        ctx.textAlign = "center";
+
+        ctx.shadowColor = RED;
+        ctx.shadowBlur = 20;
+        ctx.fillStyle = RED;
+        ctx.fillText("GAME OVER", W / 2, H * 0.035 + fontSize / 2);
+        ctx.shadowBlur = 0;
+
+        // Show word
+        const subSize = Math.floor(W * 0.035);
+        ctx.font = "bold " + subSize + "px 'SF Mono', 'Fira Code', 'Courier New', monospace";
+        ctx.fillStyle = YELLOW;
+        ctx.fillText("The word was: " + targetWord, W / 2, H * 0.035 + fontSize + 12);
+
+        if (elapsed > 1600) {
+            const fadeIn2 = Math.min((elapsed - 1600) / 600, 1);
+            const pulse = 0.5 + 0.5 * Math.sin(now * 0.003);
+            ctx.globalAlpha = fadeIn2 * (0.5 + pulse * 0.5);
+            ctx.fillStyle = CYAN;
+            ctx.font = Math.floor(W * 0.028) + "px 'SF Mono', 'Fira Code', 'Courier New', monospace";
+            ctx.fillText("[ press any key to play again ]", W / 2, H * 0.96);
+        }
+        ctx.restore();
+    }
+}
+
+// --- Main loop ---
+function frame(now) {
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = BG;
+    ctx.fillRect(0, 0, W, H);
+
+    if (phase === PHASE_START) {
+        drawTitle(now);
+    } else if (phase === PHASE_PLAYING) {
+        // Header
+        const titleSize = Math.floor(W * 0.045);
+        ctx.font = "bold " + titleSize + "px 'SF Mono', 'Fira Code', 'Courier New', monospace";
+        ctx.textAlign = "center";
+        ctx.fillStyle = CYAN;
+        ctx.fillText("WORDLE", W / 2, gridY - 16);
+
+        drawGrid(now);
+        drawKeyboard();
+        drawMessage(now);
+    } else if (phase === PHASE_WIN) {
+        drawWinScreen(now);
+    } else if (phase === PHASE_LOSE) {
+        drawLoseScreen(now);
+    }
+
+    requestAnimationFrame(frame);
+}
+
+requestAnimationFrame(frame);
+
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>WHACK-A-MOLE - mahowald.io</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: #0a0a1a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: "SF Mono", "Fira Code", "Courier New", monospace;
+    -webkit-user-select: none;
+    user-select: none;
+    touch-action: none;
+    -webkit-touch-callout: none;
+    overscroll-behavior: none;
+}
+canvas {
+    display: block;
+    border-radius: 4px;
+    box-shadow: 0 0 40px rgba(0,255,200,0.08), 0 0 80px rgba(0,255,200,0.04), 0 0 120px rgba(0,255,200,0.02), 0 4px 30px rgba(0,0,0,0.6);
+}
+.back-link {
+    position: fixed; top: 16px; left: 16px;
+    color: #00ffc8; text-decoration: none;
+    font-family: "SF Mono", "Fira Code", "Courier New", monospace;
+    font-size: 14px; z-index: 100; opacity: 0.7; transition: opacity 0.2s;
+}
+.back-link:hover { opacity: 1; }
+</style>
+</head>
+<body>
+<a href="/" class="back-link">&larr; BACK</a>
+<canvas id="c"></canvas>
+<script>
+(function() { "use strict";
+
+/* ── constants & colors ── */
+const BG       = "#0a0a1a";
+const CYAN     = "#00ffc8";
+const PURPLE   = "#a855f7";
+const YELLOW   = "#ffd93d";
+const RED      = "#ff6b6b";
+const DIM_CYAN = "rgba(0,255,200,0.15)";
+const WHITE    = "#ffffff";
+const FONT     = '"SF Mono","Fira Code","Courier New",monospace';
+
+const CANVAS_W = 500;
+const CANVAS_H = 500;
+const ROUND_TIME = 30; // seconds
+const GRID = 3;
+
+/* ── canvas setup with DPI scaling ── */
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+const dpr = window.devicePixelRatio || 1;
+
+function sizeCanvas() {
+    const maxW = window.innerWidth * 0.92;
+    const maxH = window.innerHeight * 0.92;
+    const scale = Math.min(maxW / CANVAS_W, maxH / CANVAS_H, 1);
+    const w = Math.floor(CANVAS_W * scale);
+    const h = Math.floor(CANVAS_H * scale);
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    canvas.style.width = w + "px";
+    canvas.style.height = h + "px";
+    ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
+}
+sizeCanvas();
+window.addEventListener("resize", sizeCanvas);
+
+/* ── game state ── */
+const STATE = { START: 0, PLAYING: 1, GAME_OVER: 2 };
+let state = STATE.START;
+let score = 0;
+let combo = 0;
+let highScore = 0;
+let timeLeft = ROUND_TIME;
+let lastTime = 0;
+let spawnTimer = 0;
+
+// localStorage high score
+try { highScore = parseInt(localStorage.getItem("whackamole_hi")) || 0; } catch(e) {}
+function saveHigh() { try { localStorage.setItem("whackamole_hi", highScore); } catch(e) {} }
+
+/* ── holes & moles ── */
+const HOLE_RADIUS = 38;
+const MOLE_RADIUS = 30;
+const holes = [];
+const PADDING_X = 70;
+const PADDING_Y = 100;
+const SPACING_X = (CANVAS_W - PADDING_X * 2) / (GRID - 1);
+const SPACING_Y = (CANVAS_H - PADDING_Y - 60) / (GRID - 1);
+
+for (let r = 0; r < GRID; r++) {
+    for (let c = 0; c < GRID; c++) {
+        holes.push({
+            x: PADDING_X + c * SPACING_X,
+            y: PADDING_Y + r * SPACING_Y,
+            mole: null
+        });
+    }
+}
+
+/* mole types */
+const MOLE_NORMAL = 0;
+const MOLE_GOLDEN = 1;
+const MOLE_BOMB   = 2;
+
+function createMole(type) {
+    // base show time decreases as game progresses
+    const progress = 1 - (timeLeft / ROUND_TIME); // 0 -> 1
+    const baseTime = 1.6 - progress * 0.9; // 1.6s -> 0.7s
+    return {
+        type: type,
+        phase: 0,       // 0=rising, 1=showing, 2=falling, 3=gone
+        riseT: 0,       // animation progress 0..1
+        showTimer: baseTime,
+        hitAnim: 0,     // >0 means hit animation playing
+        hit: false
+    };
+}
+
+/* ── particles (hit sparks/stars) ── */
+let particles = [];
+
+function spawnHitParticles(x, y, color) {
+    const count = 12;
+    for (let i = 0; i < count; i++) {
+        const angle = (Math.PI * 2 / count) * i + Math.random() * 0.4;
+        const speed = 80 + Math.random() * 120;
+        particles.push({
+            x: x, y: y,
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed - 40,
+            life: 0.5 + Math.random() * 0.3,
+            maxLife: 0.5 + Math.random() * 0.3,
+            color: color,
+            size: 2 + Math.random() * 3,
+            isStar: Math.random() > 0.5
+        });
+    }
+}
+
+/* ── floating score text ── */
+let floatingTexts = [];
+
+function spawnFloatingText(x, y, text, color) {
+    floatingTexts.push({
+        x: x, y: y,
+        text: text,
+        color: color,
+        life: 1.0,
+        maxLife: 1.0
+    });
+}
+
+/* ── spawn logic ── */
+function getSpawnInterval() {
+    const progress = 1 - (timeLeft / ROUND_TIME);
+    return 1.2 - progress * 0.7; // 1.2s down to 0.5s
+}
+
+function spawnMole() {
+    // find empty holes
+    const empty = [];
+    for (let i = 0; i < holes.length; i++) {
+        if (!holes[i].mole) empty.push(i);
+    }
+    if (empty.length === 0) return;
+
+    const idx = empty[Math.floor(Math.random() * empty.length)];
+    const roll = Math.random();
+    let type = MOLE_NORMAL;
+    if (roll < 0.08) type = MOLE_GOLDEN;       // 8% golden
+    else if (roll < 0.20) type = MOLE_BOMB;     // 12% bomb
+
+    holes[idx].mole = createMole(type);
+}
+
+/* ── input handling ── */
+function getCanvasPos(e) {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = CANVAS_W / rect.width;
+    const scaleY = CANVAS_H / rect.height;
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    return {
+        x: (clientX - rect.left) * scaleX,
+        y: (clientY - rect.top) * scaleY
+    };
+}
+
+function handleClick(e) {
+    e.preventDefault();
+    const pos = getCanvasPos(e);
+
+    if (state === STATE.START) {
+        startGame();
+        return;
+    }
+    if (state === STATE.GAME_OVER) {
+        state = STATE.START;
+        return;
+    }
+
+    // playing - check mole hits
+    let hitSomething = false;
+    for (let i = 0; i < holes.length; i++) {
+        const h = holes[i];
+        if (!h.mole || h.mole.hit || h.mole.phase >= 2) continue;
+
+        // mole position (adjusted for rise)
+        const riseOffset = (1 - h.mole.riseT) * MOLE_RADIUS * 2;
+        const moleY = h.y - 10 - riseOffset;
+        const dx = pos.x - h.x;
+        const dy = pos.y - moleY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        if (dist < MOLE_RADIUS + 10) {
+            h.mole.hit = true;
+            h.mole.hitAnim = 0.4;
+            h.mole.phase = 2;
+            hitSomething = true;
+
+            if (h.mole.type === MOLE_BOMB) {
+                // bomb - lose points and reset combo
+                const penalty = 50;
+                score = Math.max(0, score - penalty);
+                combo = 0;
+                spawnHitParticles(h.x, moleY, RED);
+                spawnFloatingText(h.x, moleY - 20, "-" + penalty, RED);
+            } else {
+                // normal or golden
+                combo++;
+                const multiplier = Math.min(combo, 5);
+                const basePoints = h.mole.type === MOLE_GOLDEN ? 30 : 10;
+                const points = basePoints * multiplier;
+                score += points;
+                if (score > highScore) { highScore = score; saveHigh(); }
+
+                const color = h.mole.type === MOLE_GOLDEN ? YELLOW : CYAN;
+                spawnHitParticles(h.x, moleY, color);
+
+                let txt = "+" + points;
+                if (multiplier > 1) txt += " x" + multiplier;
+                spawnFloatingText(h.x, moleY - 20, txt, color);
+            }
+            break; // only hit one mole per click
+        }
+    }
+
+    if (!hitSomething && state === STATE.PLAYING) {
+        // missed - reset combo
+        combo = 0;
+    }
+}
+
+canvas.addEventListener("mousedown", handleClick);
+canvas.addEventListener("touchstart", handleClick, { passive: false });
+
+/* ── game flow ── */
+function startGame() {
+    state = STATE.PLAYING;
+    score = 0;
+    combo = 0;
+    timeLeft = ROUND_TIME;
+    spawnTimer = 0.5;
+    particles = [];
+    floatingTexts = [];
+    for (let i = 0; i < holes.length; i++) holes[i].mole = null;
+}
+
+/* ── update ── */
+function update(dt) {
+    if (state !== STATE.PLAYING) return;
+
+    // timer
+    timeLeft -= dt;
+    if (timeLeft <= 0) {
+        timeLeft = 0;
+        state = STATE.GAME_OVER;
+        if (score > highScore) { highScore = score; saveHigh(); }
+        return;
+    }
+
+    // spawn
+    spawnTimer -= dt;
+    if (spawnTimer <= 0) {
+        spawnMole();
+        spawnTimer = getSpawnInterval();
+    }
+
+    // update moles
+    for (let i = 0; i < holes.length; i++) {
+        const m = holes[i].mole;
+        if (!m) continue;
+
+        if (m.phase === 0) {
+            // rising
+            m.riseT += dt / 0.25; // 0.25s rise
+            if (m.riseT >= 1) { m.riseT = 1; m.phase = 1; }
+        } else if (m.phase === 1) {
+            // showing
+            m.showTimer -= dt;
+            if (m.showTimer <= 0) {
+                m.phase = 2; // start falling
+                if (!m.hit) combo = 0; // missed - reset combo
+            }
+        } else if (m.phase === 2) {
+            // falling
+            m.riseT -= dt / 0.2; // 0.2s fall
+            if (m.hitAnim > 0) m.hitAnim -= dt;
+            if (m.riseT <= 0) { m.riseT = 0; m.phase = 3; }
+        } else if (m.phase === 3) {
+            holes[i].mole = null;
+        }
+    }
+
+    // update particles
+    for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.vy += 200 * dt; // gravity
+        p.life -= dt;
+        if (p.life <= 0) particles.splice(i, 1);
+    }
+
+    // update floating texts
+    for (let i = floatingTexts.length - 1; i >= 0; i--) {
+        const f = floatingTexts[i];
+        f.y -= 40 * dt;
+        f.life -= dt;
+        if (f.life <= 0) floatingTexts.splice(i, 1);
+    }
+}
+
+/* ── drawing helpers ── */
+function drawRoundedRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+}
+
+function drawStar(cx, cy, r, points) {
+    ctx.beginPath();
+    for (let i = 0; i < points * 2; i++) {
+        const angle = (Math.PI * 2 / (points * 2)) * i - Math.PI / 2;
+        const rad = i % 2 === 0 ? r : r * 0.4;
+        const x = cx + Math.cos(angle) * rad;
+        const y = cy + Math.sin(angle) * rad;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+}
+
+/* ── render ── */
+function render() {
+    ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+
+    // background
+    ctx.fillStyle = BG;
+    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+    // subtle grid pattern
+    ctx.strokeStyle = "rgba(0,255,200,0.03)";
+    ctx.lineWidth = 1;
+    for (let x = 0; x < CANVAS_W; x += 25) {
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, CANVAS_H); ctx.stroke();
+    }
+    for (let y = 0; y < CANVAS_H; y += 25) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(CANVAS_W, y); ctx.stroke();
+    }
+
+    if (state === STATE.START) {
+        renderStartScreen();
+    } else if (state === STATE.PLAYING) {
+        renderPlaying();
+    } else if (state === STATE.GAME_OVER) {
+        renderGameOver();
+    }
+}
+
+function renderStartScreen() {
+    // title
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+
+    ctx.font = "bold 36px " + FONT;
+    ctx.fillStyle = CYAN;
+    ctx.shadowColor = CYAN;
+    ctx.shadowBlur = 20;
+    ctx.fillText("WHACK-A-MOLE", CANVAS_W / 2, 120);
+    ctx.shadowBlur = 0;
+
+    // draw a sample mole
+    drawMoleCharacter(CANVAS_W / 2, 230, MOLE_NORMAL, 1, 0);
+
+    // instructions
+    ctx.font = "13px " + FONT;
+    ctx.fillStyle = "rgba(255,255,255,0.5)";
+    ctx.fillText("Click or tap the moles before they hide!", CANVAS_W / 2, 310);
+
+    ctx.font = "12px " + FONT;
+    ctx.fillStyle = PURPLE;
+    ctx.fillText("Normal = 10pts", CANVAS_W / 2 - 100, 345);
+    ctx.fillStyle = YELLOW;
+    ctx.fillText("Golden = 30pts", CANVAS_W / 2 + 100, 345);
+    ctx.fillStyle = RED;
+    ctx.fillText("Bomb = -50pts!", CANVAS_W / 2, 370);
+
+    ctx.font = "12px " + FONT;
+    ctx.fillStyle = "rgba(255,255,255,0.35)";
+    ctx.fillText("Consecutive hits build combo multiplier!", CANVAS_W / 2, 400);
+
+    // high score
+    if (highScore > 0) {
+        ctx.font = "12px " + FONT;
+        ctx.fillStyle = YELLOW;
+        ctx.fillText("HIGH SCORE: " + highScore, CANVAS_W / 2, 430);
+    }
+
+    // start prompt - pulsing
+    const pulse = 0.6 + Math.sin(performance.now() / 400) * 0.4;
+    ctx.globalAlpha = pulse;
+    ctx.font = "bold 16px " + FONT;
+    ctx.fillStyle = CYAN;
+    ctx.fillText("[ CLICK TO START ]", CANVAS_W / 2, 470);
+    ctx.globalAlpha = 1;
+}
+
+function renderPlaying() {
+    // HUD
+    renderHUD();
+
+    // draw holes and moles
+    for (let i = 0; i < holes.length; i++) {
+        drawHole(holes[i]);
+    }
+
+    // particles
+    for (let i = 0; i < particles.length; i++) {
+        const p = particles[i];
+        const alpha = p.life / p.maxLife;
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = p.color;
+        if (p.isStar) {
+            drawStar(p.x, p.y, p.size, 4);
+            ctx.fill();
+        } else {
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+    }
+
+    // floating texts
+    for (let i = 0; i < floatingTexts.length; i++) {
+        const f = floatingTexts[i];
+        const alpha = f.life / f.maxLife;
+        ctx.globalAlpha = alpha;
+        ctx.font = "bold 16px " + FONT;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = f.color;
+        ctx.shadowColor = f.color;
+        ctx.shadowBlur = 10;
+        ctx.fillText(f.text, f.x, f.y);
+        ctx.shadowBlur = 0;
+        ctx.globalAlpha = 1;
+    }
+}
+
+function renderHUD() {
+    // score
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.font = "bold 18px " + FONT;
+    ctx.fillStyle = CYAN;
+    ctx.fillText("SCORE: " + score, 20, 20);
+
+    // combo
+    if (combo > 1) {
+        ctx.font = "bold 14px " + FONT;
+        ctx.fillStyle = PURPLE;
+        const mult = Math.min(combo, 5);
+        ctx.fillText("COMBO x" + mult, 20, 46);
+    }
+
+    // timer
+    ctx.textAlign = "right";
+    ctx.font = "bold 18px " + FONT;
+    const timerColor = timeLeft <= 5 ? RED : (timeLeft <= 10 ? YELLOW : WHITE);
+    ctx.fillStyle = timerColor;
+    if (timeLeft <= 5) {
+        ctx.shadowColor = RED;
+        ctx.shadowBlur = 10;
+    }
+    ctx.fillText(Math.ceil(timeLeft) + "s", CANVAS_W - 20, 20);
+    ctx.shadowBlur = 0;
+
+    // timer bar
+    const barW = 160;
+    const barH = 4;
+    const barX = CANVAS_W - 20 - barW;
+    const barY = 46;
+    ctx.fillStyle = "rgba(255,255,255,0.1)";
+    ctx.fillRect(barX, barY, barW, barH);
+    const fill = (timeLeft / ROUND_TIME) * barW;
+    ctx.fillStyle = timerColor;
+    ctx.fillRect(barX, barY, fill, barH);
+
+    // high score
+    ctx.textAlign = "center";
+    ctx.font = "11px " + FONT;
+    ctx.fillStyle = "rgba(255,255,255,0.3)";
+    ctx.fillText("HI: " + highScore, CANVAS_W / 2, 22);
+}
+
+function drawHole(hole) {
+    const x = hole.x;
+    const y = hole.y;
+
+    // hole shadow/pit (ellipse)
+    ctx.save();
+
+    // clip region so mole doesn't show below hole
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x - HOLE_RADIUS - 5, 0, (HOLE_RADIUS + 5) * 2, y + 5);
+    ctx.clip();
+
+    // draw mole if present
+    if (hole.mole) {
+        const m = hole.mole;
+        const riseOffset = (1 - m.riseT) * MOLE_RADIUS * 2;
+        const moleY = y - 10 - riseOffset;
+
+        // hit shake
+        let shakeX = 0;
+        if (m.hitAnim > 0) {
+            shakeX = Math.sin(m.hitAnim * 60) * 4 * (m.hitAnim / 0.4);
+        }
+
+        drawMoleCharacter(x + shakeX, moleY, m.type, m.riseT, m.hit ? 1 : 0);
+    }
+
+    ctx.restore();
+
+    // draw the hole rim on top
+    ctx.beginPath();
+    ctx.ellipse(x, y + 5, HOLE_RADIUS + 4, 14, 0, 0, Math.PI * 2);
+    ctx.fillStyle = "#0d0d24";
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.ellipse(x, y + 5, HOLE_RADIUS + 4, 14, 0, 0, Math.PI * 2);
+    ctx.strokeStyle = "rgba(0,255,200,0.15)";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // inner dark
+    ctx.beginPath();
+    ctx.ellipse(x, y + 5, HOLE_RADIUS - 2, 10, 0, 0, Math.PI * 2);
+    ctx.fillStyle = "#060612";
+    ctx.fill();
+
+    ctx.restore();
+}
+
+function drawMoleCharacter(x, y, type, riseT, hitState) {
+    // body colors by type
+    let bodyColor, eyeGlow, accentColor;
+    if (type === MOLE_GOLDEN) {
+        bodyColor = "#c8a800";
+        eyeGlow = YELLOW;
+        accentColor = YELLOW;
+    } else if (type === MOLE_BOMB) {
+        bodyColor = "#8b2020";
+        eyeGlow = RED;
+        accentColor = RED;
+    } else {
+        bodyColor = "#6b21a8";
+        eyeGlow = CYAN;
+        accentColor = PURPLE;
+    }
+
+    if (hitState > 0) {
+        // flash white on hit
+        bodyColor = "#ffffff";
+    }
+
+    const r = MOLE_RADIUS;
+
+    // body glow
+    ctx.shadowColor = accentColor;
+    ctx.shadowBlur = 15;
+
+    // body (rounded)
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fillStyle = bodyColor;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // body outline
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.strokeStyle = accentColor;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    if (hitState > 0) return; // don't draw face when hit-flashing
+
+    // face lighter circle
+    ctx.beginPath();
+    ctx.arc(x, y + 4, r * 0.6, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(255,255,255,0.08)";
+    ctx.fill();
+
+    // eyes
+    const eyeSpacing = 9;
+    const eyeY = y - 4;
+
+    // left eye
+    ctx.beginPath();
+    ctx.arc(x - eyeSpacing, eyeY, 5, 0, Math.PI * 2);
+    ctx.fillStyle = "#0a0a1a";
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(x - eyeSpacing + 1.5, eyeY - 1.5, 2.2, 0, Math.PI * 2);
+    ctx.fillStyle = eyeGlow;
+    ctx.shadowColor = eyeGlow;
+    ctx.shadowBlur = 6;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // right eye
+    ctx.beginPath();
+    ctx.arc(x + eyeSpacing, eyeY, 5, 0, Math.PI * 2);
+    ctx.fillStyle = "#0a0a1a";
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(x + eyeSpacing + 1.5, eyeY - 1.5, 2.2, 0, Math.PI * 2);
+    ctx.fillStyle = eyeGlow;
+    ctx.shadowColor = eyeGlow;
+    ctx.shadowBlur = 6;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // nose
+    ctx.beginPath();
+    ctx.arc(x, y + 4, 3, 0, Math.PI * 2);
+    ctx.fillStyle = accentColor;
+    ctx.fill();
+
+    // mouth
+    ctx.beginPath();
+    ctx.arc(x, y + 6, 7, 0.15 * Math.PI, 0.85 * Math.PI);
+    ctx.strokeStyle = "rgba(255,255,255,0.3)";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // type-specific decorations
+    if (type === MOLE_GOLDEN) {
+        // crown / sparkle on top
+        drawStar(x, y - r - 4, 6, 4);
+        ctx.fillStyle = YELLOW;
+        ctx.shadowColor = YELLOW;
+        ctx.shadowBlur = 8;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+    } else if (type === MOLE_BOMB) {
+        // fuse on top
+        ctx.beginPath();
+        ctx.moveTo(x, y - r);
+        ctx.quadraticCurveTo(x + 8, y - r - 12, x + 3, y - r - 16);
+        ctx.strokeStyle = "#aaa";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        // spark at tip
+        const sparkPhase = performance.now() / 100;
+        ctx.beginPath();
+        ctx.arc(x + 3, y - r - 17, 3 + Math.sin(sparkPhase) * 1.5, 0, Math.PI * 2);
+        ctx.fillStyle = YELLOW;
+        ctx.shadowColor = YELLOW;
+        ctx.shadowBlur = 10;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+    } else {
+        // little ears for normal mole
+        ctx.beginPath();
+        ctx.arc(x - r + 6, y - r + 6, 7, 0, Math.PI * 2);
+        ctx.fillStyle = bodyColor;
+        ctx.strokeStyle = accentColor;
+        ctx.lineWidth = 1.5;
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(x + r - 6, y - r + 6, 7, 0, Math.PI * 2);
+        ctx.fillStyle = bodyColor;
+        ctx.strokeStyle = accentColor;
+        ctx.lineWidth = 1.5;
+        ctx.fill();
+        ctx.stroke();
+    }
+}
+
+function renderGameOver() {
+    // draw holes in background (empty)
+    for (let i = 0; i < holes.length; i++) {
+        const tempMole = holes[i].mole;
+        holes[i].mole = null;
+        drawHole(holes[i]);
+        holes[i].mole = tempMole;
+    }
+
+    // dark overlay
+    ctx.fillStyle = "rgba(10,10,26,0.85)";
+    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+
+    // game over
+    ctx.font = "bold 32px " + FONT;
+    ctx.fillStyle = RED;
+    ctx.shadowColor = RED;
+    ctx.shadowBlur = 20;
+    ctx.fillText("TIME'S UP!", CANVAS_W / 2, 150);
+    ctx.shadowBlur = 0;
+
+    // score
+    ctx.font = "bold 48px " + FONT;
+    ctx.fillStyle = CYAN;
+    ctx.shadowColor = CYAN;
+    ctx.shadowBlur = 15;
+    ctx.fillText(score, CANVAS_W / 2, 230);
+    ctx.shadowBlur = 0;
+
+    ctx.font = "14px " + FONT;
+    ctx.fillStyle = "rgba(255,255,255,0.5)";
+    ctx.fillText("POINTS", CANVAS_W / 2, 265);
+
+    // new high score?
+    if (score >= highScore && score > 0) {
+        ctx.font = "bold 16px " + FONT;
+        ctx.fillStyle = YELLOW;
+        ctx.shadowColor = YELLOW;
+        ctx.shadowBlur = 10;
+        ctx.fillText("NEW HIGH SCORE!", CANVAS_W / 2, 310);
+        ctx.shadowBlur = 0;
+    } else {
+        ctx.font = "13px " + FONT;
+        ctx.fillStyle = "rgba(255,255,255,0.35)";
+        ctx.fillText("HIGH SCORE: " + highScore, CANVAS_W / 2, 310);
+    }
+
+    // restart prompt
+    const pulse = 0.6 + Math.sin(performance.now() / 400) * 0.4;
+    ctx.globalAlpha = pulse;
+    ctx.font = "bold 15px " + FONT;
+    ctx.fillStyle = CYAN;
+    ctx.fillText("[ CLICK TO CONTINUE ]", CANVAS_W / 2, 400);
+    ctx.globalAlpha = 1;
+}
+
+/* ── main loop ── */
+function loop(timestamp) {
+    const dt = Math.min((timestamp - lastTime) / 1000, 0.1);
+    lastTime = timestamp;
+
+    update(dt);
+    render();
+
+    requestAnimationFrame(loop);
+}
+
+lastTime = performance.now();
+requestAnimationFrame(loop);
+
+})();
+</script>
+</body>
+</html>

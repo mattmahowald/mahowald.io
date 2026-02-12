@@ -221,7 +221,7 @@
         <div class="title-section">
             <div class="main-title">ARCADE</div>
             <div class="subtitle">mahowald.io</div>
-            <div class="game-count">12 classic games</div>
+            <div class="game-count">24 classic games</div>
         </div>
 
         <div class="games-grid" id="games-grid"></div>
@@ -342,6 +342,114 @@
             accent: '#22c55e',
             glow: 'rgba(34, 197, 94, 0.15)',
             icon: drawFroggerIcon
+        },
+        {
+            id: 'connect4',
+            name: 'Connect 4',
+            desc: 'Drop discs to connect four',
+            href: '/games/connect4.html',
+            accent: '#a855f7',
+            glow: 'rgba(168, 85, 247, 0.15)',
+            icon: drawConnect4Icon
+        },
+        {
+            id: 'wordle',
+            name: 'Wordle',
+            desc: 'Guess the 5-letter word',
+            href: '/games/wordle.html',
+            accent: '#22c55e',
+            glow: 'rgba(34, 197, 94, 0.15)',
+            icon: drawWordleIcon
+        },
+        {
+            id: 'tictactoe',
+            name: 'Tic-Tac-Toe',
+            desc: 'Beat the unbeatable AI',
+            href: '/games/tictactoe.html',
+            accent: '#00ffc8',
+            glow: 'rgba(0, 255, 200, 0.15)',
+            icon: drawTicTacToeIcon
+        },
+        {
+            id: 'battleship',
+            name: 'Battleship',
+            desc: 'Naval warfare vs AI',
+            href: '/games/battleship.html',
+            accent: '#3b82f6',
+            glow: 'rgba(59, 130, 246, 0.15)',
+            icon: drawBattleshipIcon
+        },
+        {
+            id: 'simon',
+            name: 'Simon',
+            desc: 'Repeat the sequence',
+            href: '/games/simon.html',
+            accent: '#ffd93d',
+            glow: 'rgba(255, 217, 61, 0.15)',
+            icon: drawSimonIcon
+        },
+        {
+            id: 'runner',
+            name: 'Runner',
+            desc: 'Jump & dodge, run forever',
+            href: '/games/runner.html',
+            accent: '#00ffc8',
+            glow: 'rgba(0, 255, 200, 0.15)',
+            icon: drawRunnerIcon
+        },
+        {
+            id: 'hangman',
+            name: 'Hangman',
+            desc: 'Guess the hidden word',
+            href: '/games/hangman.html',
+            accent: '#ff6b6b',
+            glow: 'rgba(255, 107, 107, 0.15)',
+            icon: drawHangmanIcon
+        },
+        {
+            id: 'sudoku',
+            name: 'Sudoku',
+            desc: 'Fill the 9x9 grid',
+            href: '/games/sudoku.html',
+            accent: '#3b82f6',
+            glow: 'rgba(59, 130, 246, 0.15)',
+            icon: drawSudokuIcon
+        },
+        {
+            id: 'whackamole',
+            name: 'Whack-a-Mole',
+            desc: 'Smash the moles!',
+            href: '/games/whackamole.html',
+            accent: '#a855f7',
+            glow: 'rgba(168, 85, 247, 0.15)',
+            icon: drawWhackAMoleIcon
+        },
+        {
+            id: 'checkers',
+            name: 'Checkers',
+            desc: 'Classic board game vs AI',
+            href: '/games/checkers.html',
+            accent: '#00ffc8',
+            glow: 'rgba(0, 255, 200, 0.15)',
+            icon: drawCheckersIcon
+        },
+        {
+            id: 'tower',
+            name: 'Tower',
+            desc: 'Stack blocks perfectly',
+            href: '/games/tower.html',
+            accent: '#ff8c42',
+            glow: 'rgba(255, 140, 66, 0.15)',
+            icon: drawTowerIcon
+        },
+        {
+            id: 'sokoban',
+            name: 'Sokoban',
+            desc: 'Push boxes to targets',
+            href: '/games/sokoban.html',
+            accent: '#22c55e',
+            glow: 'rgba(34, 197, 94, 0.15)',
+            icon: drawSokobanIcon
         }
     ];
 
@@ -865,6 +973,102 @@
         ctx.restore();
     }
 
+    function drawConnect4Icon(ctx, s, color, t = 0) {
+        ctx.save();
+        // Board background
+        ctx.fillStyle = 'rgba(100, 80, 180, 0.12)';
+        if (ctx.roundRect) {
+            ctx.beginPath();
+            ctx.roundRect(6, 12, s - 12, s - 18, 4);
+            ctx.fill();
+        } else {
+            ctx.fillRect(6, 12, s - 12, s - 18);
+        }
+        // Grid of circles (4 cols x 3 rows)
+        const cols = 4, rows = 3;
+        const gapX = (s - 16) / cols;
+        const gapY = (s - 24) / rows;
+        const r = Math.min(gapX, gapY) * 0.32;
+        const pieces = [
+            [0,0,0,0],
+            [0,1,0,0],
+            [1,2,1,2]
+        ];
+        for (let row = 0; row < rows; row++) {
+            for (let col = 0; col < cols; col++) {
+                const px = 10 + gapX * col + gapX / 2;
+                const py = 16 + gapY * row + gapY / 2;
+                const p = pieces[row][col];
+                if (p === 0) {
+                    ctx.fillStyle = 'rgba(255,255,255,0.04)';
+                    ctx.shadowBlur = 0;
+                } else if (p === 1) {
+                    ctx.fillStyle = '#00ffc8';
+                    ctx.shadowColor = '#00ffc8';
+                    ctx.shadowBlur = 4;
+                } else {
+                    ctx.fillStyle = '#a855f7';
+                    ctx.shadowColor = '#a855f7';
+                    ctx.shadowBlur = 4;
+                }
+                ctx.beginPath();
+                ctx.arc(px, py, r, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            }
+        }
+        // Dropping piece animation
+        const dropX = 10 + gapX * 1 + gapX / 2;
+        const dropY = t ? 5 + Math.abs(Math.sin(t * 3)) * 8 : 5;
+        ctx.fillStyle = '#00ffc8';
+        ctx.shadowColor = '#00ffc8';
+        ctx.shadowBlur = 6;
+        ctx.beginPath();
+        ctx.arc(dropX, dropY, r * 0.8, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.restore();
+    }
+
+    function drawWordleIcon(ctx, s, color, t = 0) {
+        ctx.save();
+        const ts = 9, gap = 2;
+        const cols = 5, rows = 3;
+        const totalW = cols * ts + (cols - 1) * gap;
+        const totalH = rows * ts + (rows - 1) * gap;
+        const ox = (s - totalW) / 2;
+        const oy = (s - totalH) / 2 - 2;
+        const tileColors = [
+            ['#22c55e','rgba(255,255,255,0.15)','#ffd93d','rgba(255,255,255,0.15)','#22c55e'],
+            ['rgba(255,255,255,0.15)','#22c55e','#22c55e','#ffd93d','rgba(255,255,255,0.15)'],
+            ['#ffd93d','rgba(255,255,255,0.15)','#22c55e','#22c55e','#22c55e']
+        ];
+        const letters = [['W','O','R','D','S'],['G','A','M','E','S'],['P','L','A','C','E']];
+        for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+                const x = ox + c * (ts + gap);
+                const y = oy + r * (ts + gap);
+                const flip = t ? Math.sin(t * 2 + r * 1.5 + c * 0.5) : 1;
+                const scaleY = Math.abs(flip);
+                ctx.fillStyle = tileColors[r][c];
+                ctx.shadowColor = tileColors[r][c];
+                ctx.shadowBlur = 2;
+                const cy = y + ts / 2;
+                const h = ts * scaleY;
+                ctx.fillRect(x, cy - h / 2, ts, h);
+                ctx.shadowBlur = 0;
+                if (scaleY > 0.3) {
+                    ctx.fillStyle = '#fff';
+                    ctx.font = 'bold 6px monospace';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(letters[r][c], x + ts / 2, cy);
+                }
+            }
+        }
+        ctx.restore();
+    }
+
     function drawFroggerIcon(ctx, s, color, t = 0) {
         ctx.save();
         const cx = s / 2, cy = s / 2;
@@ -911,6 +1115,532 @@
         ctx.arc(cx - 3, frogY - 3, 1.5, 0, Math.PI * 2);
         ctx.arc(cx + 3, frogY - 3, 1.5, 0, Math.PI * 2);
         ctx.fill();
+        ctx.restore();
+    }
+
+    function drawTicTacToeIcon(ctx, s, color, t = 0) {
+        ctx.save();
+        const gs = s * 0.7;
+        const ox = (s - gs) / 2;
+        const oy = (s - gs) / 2;
+        const cell = gs / 3;
+        // Grid lines
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.5;
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 4;
+        ctx.lineCap = 'round';
+        for (let i = 1; i < 3; i++) {
+            ctx.beginPath();
+            ctx.moveTo(ox + i * cell, oy + 2);
+            ctx.lineTo(ox + i * cell, oy + gs - 2);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(ox + 2, oy + i * cell);
+            ctx.lineTo(ox + gs - 2, oy + i * cell);
+            ctx.stroke();
+        }
+        // X marks
+        const xCells = [0, 4, 6];
+        const markPad = cell * 0.25;
+        ctx.strokeStyle = '#00ffc8';
+        ctx.shadowColor = '#00ffc8';
+        ctx.shadowBlur = 5;
+        ctx.lineWidth = 2;
+        for (const ci of xCells) {
+            const col = ci % 3, row = Math.floor(ci / 3);
+            const cx = ox + col * cell + cell / 2;
+            const cy = oy + row * cell + cell / 2;
+            const half = cell / 2 - markPad;
+            const wobble = t ? Math.sin(t * 2 + ci) * 1 : 0;
+            ctx.beginPath();
+            ctx.moveTo(cx - half + wobble, cy - half);
+            ctx.lineTo(cx + half + wobble, cy + half);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(cx + half + wobble, cy - half);
+            ctx.lineTo(cx - half + wobble, cy + half);
+            ctx.stroke();
+        }
+        // O marks
+        const oCells = [1, 2, 8];
+        ctx.strokeStyle = '#a855f7';
+        ctx.shadowColor = '#a855f7';
+        for (const ci of oCells) {
+            const col = ci % 3, row = Math.floor(ci / 3);
+            const cx = ox + col * cell + cell / 2;
+            const cy = oy + row * cell + cell / 2;
+            const r = cell / 2 - markPad;
+            const wobble = t ? Math.sin(t * 2 + ci) * 1 : 0;
+            ctx.beginPath();
+            ctx.arc(cx + wobble, cy, r, 0, Math.PI * 2);
+            ctx.stroke();
+        }
+        ctx.restore();
+    }
+
+    function drawBattleshipIcon(ctx, s, color, t = 0) {
+        ctx.save();
+        const cx = s / 2, cy = s / 2;
+        // Grid lines
+        ctx.strokeStyle = color;
+        ctx.globalAlpha = 0.15;
+        ctx.lineWidth = 0.5;
+        const gs = 5;
+        const cellW = (s - 12) / gs;
+        for (let i = 0; i <= gs; i++) {
+            ctx.beginPath();
+            ctx.moveTo(6 + i * cellW, 6);
+            ctx.lineTo(6 + i * cellW, s - 6);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(6, 6 + i * cellW);
+            ctx.lineTo(s - 6, 6 + i * cellW);
+            ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+        // Ship hull
+        ctx.fillStyle = color;
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 4;
+        ctx.beginPath();
+        ctx.moveTo(cx - 16, cy + 2);
+        ctx.lineTo(cx + 12, cy + 2);
+        ctx.lineTo(cx + 18, cy + 6);
+        ctx.lineTo(cx - 16, cy + 6);
+        ctx.closePath();
+        ctx.fill();
+        // Cabin
+        ctx.fillRect(cx - 8, cy - 4, 12, 6);
+        // Mast
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - 4);
+        ctx.lineTo(cx, cy - 14);
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+        // Hit marker
+        ctx.strokeStyle = '#ff6b6b';
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'round';
+        const hx = cx + 14, hy = cy - 10;
+        ctx.beginPath();
+        ctx.moveTo(hx - 4, hy - 4); ctx.lineTo(hx + 4, hy + 4);
+        ctx.moveTo(hx + 4, hy - 4); ctx.lineTo(hx - 4, hy + 4);
+        ctx.stroke();
+        // Miss dot
+        ctx.fillStyle = 'rgba(150,150,170,0.5)';
+        ctx.beginPath();
+        ctx.arc(cx - 14, cy - 10, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+        // Water wave
+        ctx.strokeStyle = color;
+        ctx.globalAlpha = 0.2;
+        ctx.lineWidth = 1;
+        const waveY = cy + 12;
+        ctx.beginPath();
+        for (let x = 6; x < s - 6; x += 1) {
+            const wy = waveY + Math.sin((x * 0.15) + (t || 0) * 2) * 2;
+            if (x === 6) ctx.moveTo(x, wy);
+            else ctx.lineTo(x, wy);
+        }
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+        ctx.restore();
+    }
+
+    function drawSimonIcon(ctx, s, color, t = 0) {
+        ctx.save();
+        const pad = 6, gap = 4;
+        const qw = (s - pad * 2 - gap) / 2;
+        const colors = ['#00ffc8', '#ff6b6b', '#ffd93d', '#a855f7'];
+        const dimAlpha = [0.25, 0.25, 0.25, 0.25];
+        const litIdx = t ? Math.floor((t * 2) % 4) : -1;
+        for (let i = 0; i < 4; i++) {
+            const col = i % 2, row = Math.floor(i / 2);
+            const x = pad + col * (qw + gap);
+            const y = pad + row * (qw + gap);
+            const lit = (i === litIdx);
+            ctx.fillStyle = colors[i];
+            ctx.shadowColor = colors[i];
+            ctx.shadowBlur = lit ? 12 : 3;
+            ctx.globalAlpha = lit ? 0.9 : 0.25;
+            ctx.fillRect(x, y, qw, qw);
+            ctx.shadowBlur = 0;
+        }
+        ctx.globalAlpha = 1;
+        // Center dot
+        ctx.fillStyle = 'rgba(255,255,255,0.1)';
+        ctx.beginPath();
+        ctx.arc(s / 2, s / 2, 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+
+    function drawRunnerIcon(ctx, s, color, t = 0) {
+        ctx.save();
+        // Ground line
+        ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(4, s - 14);
+        ctx.lineTo(s - 4, s - 14);
+        ctx.stroke();
+        // Runner figure (stick figure)
+        const rx = s * 0.3;
+        const ry = s - 14 - (t ? Math.abs(Math.sin(t * 4)) * 10 : 0);
+        ctx.strokeStyle = '#00ffc8';
+        ctx.shadowColor = '#00ffc8';
+        ctx.shadowBlur = 6;
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'round';
+        // Head
+        ctx.beginPath();
+        ctx.arc(rx, ry - 16, 4, 0, Math.PI * 2);
+        ctx.stroke();
+        // Body
+        ctx.beginPath();
+        ctx.moveTo(rx, ry - 12);
+        ctx.lineTo(rx, ry - 4);
+        ctx.stroke();
+        // Legs
+        const legPhase = t ? Math.sin(t * 8) * 4 : 3;
+        ctx.beginPath();
+        ctx.moveTo(rx, ry - 4);
+        ctx.lineTo(rx - legPhase, ry);
+        ctx.moveTo(rx, ry - 4);
+        ctx.lineTo(rx + legPhase, ry);
+        ctx.stroke();
+        // Arms
+        ctx.beginPath();
+        ctx.moveTo(rx, ry - 10);
+        ctx.lineTo(rx + legPhase, ry - 14);
+        ctx.moveTo(rx, ry - 10);
+        ctx.lineTo(rx - legPhase, ry - 6);
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+        // Obstacles
+        ctx.fillStyle = '#a855f7';
+        ctx.shadowColor = '#a855f7';
+        ctx.shadowBlur = 3;
+        const obs1 = t ? ((t * 30 + 20) % (s + 20)) : s * 0.65;
+        ctx.fillRect(s - obs1, s - 14 - 10, 6, 10);
+        ctx.fillRect(s - obs1 - 2, s - 14 - 12, 10, 3);
+        const obs2 = t ? ((t * 30 + 50) % (s + 20)) : s * 0.85;
+        ctx.fillRect(s - obs2, s - 14 - 8, 5, 8);
+        ctx.shadowBlur = 0;
+        ctx.restore();
+    }
+
+    function drawHangmanIcon(ctx, s, color, t = 0) {
+        ctx.save();
+        ctx.strokeStyle = '#00ffc8';
+        ctx.shadowColor = '#00ffc8';
+        ctx.shadowBlur = 4;
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'round';
+        // Gallows
+        ctx.beginPath();
+        ctx.moveTo(12, s - 10);
+        ctx.lineTo(12, 10);
+        ctx.lineTo(s / 2, 10);
+        ctx.lineTo(s / 2, 18);
+        ctx.stroke();
+        // Base
+        ctx.beginPath();
+        ctx.moveTo(6, s - 10);
+        ctx.lineTo(22, s - 10);
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+        // Body parts
+        const parts = t ? Math.min(6, Math.floor(t * 1.5 % 7)) : 4;
+        const cx = s / 2, headY = 24;
+        ctx.strokeStyle = '#ff6b6b';
+        ctx.shadowColor = '#ff6b6b';
+        ctx.shadowBlur = 4;
+        // Head
+        if (parts >= 1) {
+            ctx.beginPath();
+            ctx.arc(cx, headY, 6, 0, Math.PI * 2);
+            ctx.stroke();
+        }
+        // Body
+        if (parts >= 2) {
+            ctx.beginPath();
+            ctx.moveTo(cx, headY + 6);
+            ctx.lineTo(cx, headY + 20);
+            ctx.stroke();
+        }
+        // Left arm
+        if (parts >= 3) {
+            ctx.beginPath();
+            ctx.moveTo(cx, headY + 10);
+            ctx.lineTo(cx - 8, headY + 18);
+            ctx.stroke();
+        }
+        // Right arm
+        if (parts >= 4) {
+            ctx.beginPath();
+            ctx.moveTo(cx, headY + 10);
+            ctx.lineTo(cx + 8, headY + 18);
+            ctx.stroke();
+        }
+        // Left leg
+        if (parts >= 5) {
+            ctx.beginPath();
+            ctx.moveTo(cx, headY + 20);
+            ctx.lineTo(cx - 7, headY + 30);
+            ctx.stroke();
+        }
+        // Right leg
+        if (parts >= 6) {
+            ctx.beginPath();
+            ctx.moveTo(cx, headY + 20);
+            ctx.lineTo(cx + 7, headY + 30);
+            ctx.stroke();
+        }
+        ctx.shadowBlur = 0;
+        // Word underscores
+        ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+        ctx.lineWidth = 1.5;
+        for (let i = 0; i < 4; i++) {
+            const ux = s / 2 + 10 + i * 8;
+            ctx.beginPath();
+            ctx.moveTo(ux, s - 12);
+            ctx.lineTo(ux + 5, s - 12);
+            ctx.stroke();
+        }
+        ctx.restore();
+    }
+
+    function drawSudokuIcon(ctx, s, color, t = 0) {
+        ctx.save();
+        const gs = s - 16;
+        const ox = 8, oy = 8;
+        const cell = gs / 4;
+        // Grid
+        ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+        ctx.lineWidth = 0.5;
+        for (let i = 0; i <= 4; i++) {
+            ctx.beginPath();
+            ctx.moveTo(ox + i * cell, oy);
+            ctx.lineTo(ox + i * cell, oy + gs);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(ox, oy + i * cell);
+            ctx.lineTo(ox + gs, oy + i * cell);
+            ctx.stroke();
+        }
+        // Thick borders for 2x2 boxes
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.5;
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 3;
+        ctx.strokeRect(ox, oy, gs, gs);
+        ctx.beginPath();
+        ctx.moveTo(ox + gs / 2, oy);
+        ctx.lineTo(ox + gs / 2, oy + gs);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(ox, oy + gs / 2);
+        ctx.lineTo(ox + gs, oy + gs / 2);
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+        // Numbers
+        const nums = [[5,'',3,''],['',' ','' ,9],[7,'','',''],[' ',2,'',8]];
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        for (let r = 0; r < 4; r++) {
+            for (let c = 0; c < 4; c++) {
+                const val = nums[r][c];
+                if (val && val !== ' ') {
+                    const pulse = t ? 0.7 + Math.sin(t * 2 + r + c) * 0.3 : 1;
+                    ctx.fillStyle = typeof val === 'number' ? `rgba(59,130,246,${pulse})` : `rgba(255,255,255,${0.5 * pulse})`;
+                    ctx.fillText(val, ox + c * cell + cell / 2, oy + r * cell + cell / 2);
+                }
+            }
+        }
+        ctx.restore();
+    }
+
+    function drawWhackAMoleIcon(ctx, s, color, t = 0) {
+        ctx.save();
+        const holes = [[s*0.25, s*0.35], [s*0.5, s*0.35], [s*0.75, s*0.35],
+                        [s*0.25, s*0.65], [s*0.5, s*0.65], [s*0.75, s*0.65]];
+        const holeW = 16, holeH = 6;
+        // Draw holes
+        for (let i = 0; i < holes.length; i++) {
+            const [hx, hy] = holes[i];
+            ctx.fillStyle = 'rgba(255,255,255,0.05)';
+            ctx.beginPath();
+            ctx.ellipse(hx, hy + 6, holeW / 2, holeH / 2, 0, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        // Moles popping up
+        const activeIdx = t ? Math.floor((t * 2) % 6) : 1;
+        const activeIdx2 = t ? Math.floor((t * 2 + 3) % 6) : 4;
+        for (const idx of [activeIdx, activeIdx2]) {
+            const [hx, hy] = holes[idx];
+            const popH = t ? (Math.sin(t * 4 + idx) * 0.5 + 0.5) * 12 : 8;
+            // Mole body
+            ctx.fillStyle = '#a855f7';
+            ctx.shadowColor = '#a855f7';
+            ctx.shadowBlur = 6;
+            ctx.beginPath();
+            ctx.arc(hx, hy - popH + 4, 7, Math.PI, 0);
+            ctx.lineTo(hx + 7, hy + 2);
+            ctx.lineTo(hx - 7, hy + 2);
+            ctx.closePath();
+            ctx.fill();
+            ctx.shadowBlur = 0;
+            // Eyes
+            ctx.fillStyle = '#fff';
+            ctx.beginPath();
+            ctx.arc(hx - 3, hy - popH + 1, 1.5, 0, Math.PI * 2);
+            ctx.arc(hx + 3, hy - popH + 1, 1.5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#0a0a1a';
+            ctx.beginPath();
+            ctx.arc(hx - 2.5, hy - popH + 1, 0.8, 0, Math.PI * 2);
+            ctx.arc(hx + 3.5, hy - popH + 1, 0.8, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        // Hammer
+        if (t) {
+            const hamX = holes[activeIdx][0] + 10;
+            const hamY = holes[activeIdx][1] - 18 + Math.sin(t * 6) * 4;
+            ctx.fillStyle = '#ffd93d';
+            ctx.shadowColor = '#ffd93d';
+            ctx.shadowBlur = 4;
+            ctx.fillRect(hamX - 4, hamY - 6, 8, 8);
+            ctx.fillStyle = '#8b6914';
+            ctx.fillRect(hamX - 1, hamY + 2, 2, 10);
+            ctx.shadowBlur = 0;
+        }
+        ctx.restore();
+    }
+
+    function drawCheckersIcon(ctx, s, color, t = 0) {
+        ctx.save();
+        const bs = 7, pad = 8;
+        const gridSize = 8 * bs;
+        const ox = (s - gridSize) / 2;
+        const oy = (s - gridSize) / 2;
+        // Board
+        for (let r = 0; r < 8; r++) {
+            for (let c = 0; c < 8; c++) {
+                ctx.fillStyle = (r + c) % 2 === 0 ? 'rgba(255,255,255,0.03)' : 'rgba(255,255,255,0.07)';
+                ctx.fillRect(ox + c * bs, oy + r * bs, bs, bs);
+            }
+        }
+        // Pieces
+        const pieces = [
+            {r:0,c:1,t:'ai'},{r:0,c:3,t:'ai'},{r:0,c:5,t:'ai'},
+            {r:1,c:0,t:'ai'},{r:1,c:2,t:'ai'},
+            {r:5,c:2,t:'p'},{r:5,c:4,t:'p'},
+            {r:6,c:1,t:'p'},{r:6,c:3,t:'p'},{r:6,c:5,t:'p'}
+        ];
+        for (const p of pieces) {
+            const cx = ox + p.c * bs + bs / 2;
+            const cy = oy + p.r * bs + bs / 2;
+            const wobble = t ? Math.sin(t * 2 + p.r + p.c) * 0.5 : 0;
+            ctx.fillStyle = p.t === 'p' ? '#00ffc8' : '#a855f7';
+            ctx.shadowColor = ctx.fillStyle;
+            ctx.shadowBlur = 3;
+            ctx.beginPath();
+            ctx.arc(cx + wobble, cy, bs / 2 - 1, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+        }
+        ctx.restore();
+    }
+
+    function drawTowerIcon(ctx, s, color, t = 0) {
+        ctx.save();
+        const colors = ['#00ffc8', '#a855f7', '#ffd93d', '#ff6b6b', '#3b82f6', '#ff8c42'];
+        const blockH = 7;
+        const gap = 1;
+        const baseW = s - 20;
+        const layers = 6;
+        for (let i = 0; i < layers; i++) {
+            const w = baseW - i * 4 + (t ? Math.sin(t + i * 0.5) * 2 : 0);
+            const x = (s - w) / 2;
+            const y = s - 12 - (i + 1) * (blockH + gap);
+            ctx.fillStyle = colors[i % colors.length];
+            ctx.shadowColor = colors[i % colors.length];
+            ctx.shadowBlur = 4;
+            ctx.fillRect(x, y, w, blockH);
+            ctx.shadowBlur = 0;
+        }
+        // Moving block at top
+        if (t) {
+            const topY = s - 12 - (layers + 1) * (blockH + gap);
+            const moveX = s / 2 + Math.sin(t * 3) * (s / 3);
+            const topW = baseW - layers * 4;
+            ctx.fillStyle = colors[layers % colors.length];
+            ctx.shadowColor = colors[layers % colors.length];
+            ctx.shadowBlur = 6;
+            ctx.fillRect(moveX - topW / 2, topY, topW, blockH);
+            ctx.shadowBlur = 0;
+        }
+        // Ground
+        ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(6, s - 10);
+        ctx.lineTo(s - 6, s - 10);
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    function drawSokobanIcon(ctx, s, color, t = 0) {
+        ctx.save();
+        const cs = 8, pad = 8;
+        const ox = pad, oy = pad;
+        // Walls
+        ctx.fillStyle = 'rgba(255,255,255,0.08)';
+        const walls = [[0,0],[1,0],[2,0],[3,0],[4,0],[5,0],
+                        [0,1],[0,2],[0,3],[0,4],[0,5],
+                        [5,1],[5,2],[5,3],[5,4],[5,5],
+                        [0,5],[1,5],[2,5],[3,5],[4,5],[5,5]];
+        for (const [c,r] of walls) {
+            ctx.fillRect(ox + c * cs, oy + r * cs, cs - 1, cs - 1);
+        }
+        // Targets
+        ctx.fillStyle = '#ffd93d';
+        ctx.shadowColor = '#ffd93d';
+        ctx.shadowBlur = 3;
+        const targets = [[2,2],[3,3]];
+        for (const [c,r] of targets) {
+            ctx.beginPath();
+            const tcx = ox + c * cs + cs / 2;
+            const tcy = oy + r * cs + cs / 2;
+            ctx.arc(tcx, tcy, 2, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.shadowBlur = 0;
+        // Boxes
+        ctx.fillStyle = '#a855f7';
+        ctx.shadowColor = '#a855f7';
+        ctx.shadowBlur = 3;
+        const boxOff = t ? Math.sin(t * 2) * 1 : 0;
+        const boxes = [[2,3],[3,2]];
+        for (const [c,r] of boxes) {
+            ctx.fillRect(ox + c * cs + 1 + boxOff, oy + r * cs + 1, cs - 3, cs - 3);
+        }
+        ctx.shadowBlur = 0;
+        // Player
+        ctx.fillStyle = '#00ffc8';
+        ctx.shadowColor = '#00ffc8';
+        ctx.shadowBlur = 6;
+        const px = ox + 1 * cs + cs / 2 + (t ? Math.sin(t * 3) * 2 : 0);
+        const py = oy + 2 * cs + cs / 2;
+        ctx.beginPath();
+        ctx.arc(px, py, cs / 2 - 1, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
         ctx.restore();
     }
 

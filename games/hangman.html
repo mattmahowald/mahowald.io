@@ -1,0 +1,935 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>HANGMAN - mahowald.io</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: #0a0a1a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: "SF Mono", "Fira Code", "Courier New", monospace;
+    -webkit-user-select: none;
+    user-select: none;
+}
+canvas {
+    display: block;
+    border-radius: 4px;
+    box-shadow: 0 0 40px rgba(0,255,200,0.08), 0 0 80px rgba(0,255,200,0.04), 0 0 120px rgba(0,255,200,0.02), 0 4px 30px rgba(0,0,0,0.6);
+}
+.back-link {
+    position: fixed; top: 16px; left: 16px;
+    color: #00ffc8; text-decoration: none;
+    font-family: "SF Mono", "Fira Code", "Courier New", monospace;
+    font-size: 14px; z-index: 100; opacity: 0.7; transition: opacity 0.2s;
+}
+.back-link:hover { opacity: 1; }
+</style>
+</head>
+<body>
+<a href="/" class="back-link">&larr; BACK</a>
+<canvas id="c"></canvas>
+<script>
+(function() { "use strict";
+
+// ─── CONSTANTS ───────────────────────────────────────────
+var CYAN    = "#00ffc8";
+var PURPLE  = "#a855f7";
+var YELLOW  = "#ffd93d";
+var RED     = "#ff6b6b";
+var GREEN   = "#22c55e";
+var BG      = "#0a0a1a";
+var WHITE   = "#e0e0e0";
+var DIM     = "#333348";
+var FONT    = '"SF Mono", "Fira Code", "Courier New", monospace';
+
+var BASE_W = 500, BASE_H = 550;
+var MAX_WRONG = 6;
+
+// ─── WORD LIST (200+ common words, 4-8 letters) ─────────
+var WORDS = [
+    "able","acid","aged","also","arch","area","army","atom","auto","axis",
+    "back","ball","band","bank","barn","base","bath","bear","beat","been",
+    "bell","belt","bend","best","bike","bird","bite","blow","blue","blur",
+    "boat","body","bold","bolt","bomb","bond","bone","book","boot","born",
+    "both","bowl","bulk","burn","bush","busy","byte","cafe","cage","cake",
+    "calm","came","camp","cape","card","care","cart","case","cash","cast",
+    "cave","cell","chef","chip","chop","city","clam","clan","clap","clay",
+    "clip","club","clue","coal","coat","code","coin","cold","comb","come",
+    "cook","cool","cope","copy","cord","core","corn","cost","cozy","crew",
+    "crop","crow","cube","cult","curb","cure","curl","cute","dare","dark",
+    "dart","dash","data","dawn","deal","dear","debt","deck","deed","deem",
+    "deep","deer","demo","deny","desk","dial","dice","diet","dine","dire",
+    "dirt","disc","dish","dock","dome","done","doom","door","dose","dove",
+    "down","drag","draw","drip","drop","drum","dual","duck","duel","duke",
+    "dull","dumb","dump","dune","dusk","dust","duty","each","earn","ease",
+    "east","easy","edge","edit","else","emit","epic","euro","even","ever",
+    "evil","exam","exit","expo","face","fact","fade","fail","fair","fake",
+    "fall","fame","fang","fare","farm","fast","fate","fawn","fear","feat",
+    "feed","feel","file","fill","film","find","fine","fire","firm","fish",
+    "flag","flat","flaw","fled","flex","flip","flow","foam","fold","folk",
+    "fond","font","fool","fork","form","fort","foul","four","free","frog",
+    "from","fuel","full","fund","fury","fuse","gain","gale","game","gang",
+    "gate","gave","gaze","gear","gene","gift","girl","give","glad","glow",
+    "glue","goat","goes","gold","golf","gone","good","grab","gray","grew",
+    "grid","grim","grin","grip","grow","gulf","guru","gust","hack","hail",
+    "half","hall","halt","hand","hang","hard","hare","harm","harp","hate",
+    "haul","have","haze","head","heal","heap","hear","heat","held","help",
+    "herb","herd","here","hero","hide","high","hike","hill","hint","hire",
+    "hold","hole","holy","home","hood","hook","hope","horn","host","hour",
+    "huge","hull","hung","hunt","hurt","hush","hymn","icon","idea","idle",
+    "inch","iron","isle","item","jack","jail","jazz","jean","jerk","jest",
+    "jewel","jobs","jolt","jump","june","jury","just","keen","keep","kept",
+    "kick","kids","kill","kind","king","kiss","kite","knee","knew","knit",
+    "knob","knot","know","lace","lack","laid","lake","lamb","lamp","land",
+    "lane","last","late","lawn","lazy","lead","leaf","lean","left","lend",
+    "less","liar","lick","life","lift","like","limb","lime","limp","line",
+    "link","lion","list","live","load","loan","lock","loft","logo","long",
+    "look","loop","lord","lose","loss","lost","loud","love","luck","lump",
+    "lung","lure","lurk","made","maid","mail","main","make","male","mall",
+    "mane","many","mark","mask","mass","mast","mate","maze","meal","mean",
+    "meat","meet","melt","memo","menu","mere","mesh","mild","milk","mill",
+    "mind","mine","mint","miss","mist","moan","mode","mold","mood","moon",
+    "more","moss","most","moth","move","much","mule","muse","must","myth",
+    "nail","name","navy","near","neat","neck","need","nest","news","next",
+    "nice","nine","node","none","noon","norm","nose","note","noun","null",
+    "numb","oath","obey","odds","odor","okay","omen","once","only","onto",
+    "open","oral","orca","oven","over","pace","pack","page","paid","pain",
+    "pair","pale","palm","pane","park","part","pass","past","path","peak",
+    "peel","peer","pick","pier","pile","pine","pink","pipe","plan","play",
+    "plea","plot","plug","plus","poem","poet","pole","poll","pond","pool",
+    "pope","pork","port","pose","post","pour","pray","prey","prop","pull",
+    "pulp","pump","pure","push","quit","quiz","race","rack","rage","raid",
+    "rail","rain","rank","rare","rash","rate","rays","read","real","rear",
+    "reed","reef","reel","rely","rent","rest","rice","rich","ride","rift",
+    "ring","riot","rise","risk","road","roam","roar","robe","rock","rode",
+    "role","roll","roof","room","root","rope","rose","ruin","rule","rush",
+    "rust","ruth","sack","safe","saga","sage","said","sail","sake","sale",
+    "salt","same","sand","sang","save","scan","seal","seat","seed","seek",
+    "seem","seen","self","sell","send","sept","shed","ship","shop","shot",
+    "show","shut","sick","side","sigh","sign","silk","sing","sink","site",
+    "size","skin","skip","slam","slap","sled","slew","slid","slim","slip",
+    "slot","slow","snap","snow","soak","soap","soar","sock","soft","soil",
+    "sold","sole","some","song","soon","sort","soul","span","spin","spit",
+    "spot","star","stay","stem","step","stew","stir","stop","such","suit",
+    "sure","surf","swap","swim","tabs","tack","tail","take","tale","talk",
+    "tall","tank","tape","task","team","tear","tell","tend","tent","term",
+    "test","text","than","that","them","then","they","thin","this","thou",
+    "thus","tick","tide","tidy","tied","tier","tile","till","time","tiny",
+    "tire","toad","told","toll","tomb","tone","took","tool","tops","tore",
+    "torn","toss","tour","town","trap","tray","tree","trim","trio","trip",
+    "trot","true","tube","tuck","tuna","tune","turn","twin","type","ugly",
+    "undo","unit","upon","urge","used","user","vain","vale","vane","vary",
+    "vast","veil","vein","vent","verb","very","vest","view","vine","visa",
+    "void","volt","vote","wade","wage","wait","wake","walk","wall","wand",
+    "want","ward","warm","warn","warp","wary","wash","vast","wave","waxy",
+    "weak","wear","weed","week","weld","well","went","were","west","what",
+    "when","whom","wide","wife","wild","will","wilt","wind","wine","wing",
+    "wipe","wire","wise","wish","with","woke","wolf","wood","wool","word",
+    "wore","work","worm","worn","wove","wrap","yard","yarn","yeah","year",
+    "yoga","yoke","your","zeal","zero","zinc","zone","zoom",
+    "about","above","abuse","actor","acute","admit","adopt","adult","after",
+    "agent","agree","ahead","alarm","album","alien","align","alive","alley",
+    "allow","alone","along","alter","ample","angel","anger","angle","ankle",
+    "apple","apply","arena","argue","armor","arise","aside","asset","atlas",
+    "avoid","awake","award","aware","badge","badly","basic","basin","batch",
+    "beach","begin","being","bench","berry","birth","black","blade","blame",
+    "blank","blast","blaze","bleed","blend","bless","blind","block","blood",
+    "bloom","blown","board","bones","bonus","boost","booth","bound","brain",
+    "brand","brass","brave","bread","break","breed","brief","bring","broad",
+    "broke","brown","brush","buddy","build","bunch","burst","buyer","cabin",
+    "cable","candy","cargo","carry","catch","cause","chain","chair","chalk",
+    "champ","chaos","charm","chart","chase","cheap","check","cheek","chest",
+    "chief","child","china","choir","chunk","civic","civil","claim","clash",
+    "class","clean","clear","clerk","click","cliff","climb","cling","clock",
+    "clone","close","cloth","cloud","coach","coast","color","comet","comic",
+    "coral","count","court","cover","crack","craft","crane","crash","crazy",
+    "cream","creek","crime","crisp","cross","crowd","crown","crude","crush",
+    "curve","cycle","daily","dance","debug","decor","delay","dense","depth",
+    "devil","diary","dirty","ditch","donor","doubt","dough","draft","drain",
+    "drama","drank","drawn","dream","dress","dried","drift","drill","drink",
+    "drive","drone","drown","dying","eager","early","earth","eight","elder",
+    "elect","elite","empty","enemy","enjoy","enter","equal","equip","error",
+    "essay","event","every","exact","exist","extra","fable","faith","false",
+    "fancy","fatal","fault","feast","fence","fever","fiber","field","fifth",
+    "fight","final","flame","flash","fleet","flesh","float","flock","flood",
+    "floor","flour","fluid","flush","flute","focal","focus","force","forge",
+    "forth","forum","found","fox","frame","frank","fraud","fresh","front",
+    "frost","froze","fruit","fully","funds","funny","gauge","genre","ghost",
+    "giant","given","glare","glass","globe","gloom","glory","glove","grace",
+    "grade","grain","grand","grant","grasp","grass","grave","great","green",
+    "greet","grief","gross","group","grove","grown","guard","guess","guest",
+    "guide","guilt","habit","happy","harsh","haven","heart","heavy","hence",
+    "hinge","hobby","honor","hotel","house","human","humor","hurry","hyper",
+    "ideal","image","imply","index","indie","inner","input","irony","ivory",
+    "jewel","joint","joker","juice","juicy","judge","knock","known","label",
+    "labor","large","laser","later","laugh","layer","learn","lease","least",
+    "leave","legal","lemon","level","light","limit","linen","liver","local",
+    "lodge","logic","login","loose","lover","lower","loyal","lunar","lunch",
+    "magic","major","maker","manor","maple","march","match","mayor","media",
+    "merge","mercy","merit","metal","meter","might","minor","minus","model",
+    "money","month","moral","motor","mount","mouse","mouth","movie","music",
+    "naive","nerve","never","noble","noise","north","noted","novel","nurse",
+    "ocean","offer","often","olive","onset","opera","orbit","order","other",
+    "ought","outer","owner","oxide","ozone","paint","panel","panic","paper",
+    "patch","pause","peace","pearl","penny","phase","phone","photo","piano",
+    "piece","pilot","pinch","pitch","pixel","place","plain","plane","plant",
+    "plate","plaza","plead","pluck","plumb","plume","plump","point","polar",
+    "pound","power","press","price","pride","prime","print","prior","prize",
+    "probe","prone","proof","prose","proud","prove","proxy","pulse","punch",
+    "pupil","queen","query","quest","quick","quiet","quite","quota","quote",
+    "radar","radio","rally","ranch","range","rapid","ratio","reach","react",
+    "ready","realm","rebel","refer","reign","relax","renal","renew","reply",
+    "rider","ridge","rifle","right","rigid","rival","river","robin","robot",
+    "rocky","roman","rouge","rough","round","route","royal","rugby","ruler",
+    "rural","salad","sauce","scale","scare","scene","scent","scope","score",
+    "scout","screw","seize","sense","serve","seven","shade","shall","shame",
+    "shape","share","sharp","sheer","sheet","shelf","shell","shift","shine",
+    "shock","shoot","shore","short","shout","siege","sight","sigma","silly",
+    "since","sixth","sixty","sized","skill","skull","slate","sleep","slice",
+    "slide","slope","smart","smell","smile","smoke","snake","solar","solid",
+    "solve","sorry","sound","south","space","spare","spark","speak","speed",
+    "spend","spice","spine","spite","split","spoke","spoon","spray","squad",
+    "stack","staff","stage","stain","stair","stake","stale","stall","stamp",
+    "stand","stark","start","state","steak","steal","steam","steel","steep",
+    "steer","stick","stiff","still","stock","stone","stood","store","storm",
+    "story","stove","strip","stuck","study","stuff","style","sugar","suite",
+    "sunny","super","surge","swamp","swear","sweep","sweet","swept","swift",
+    "swing","sword","swore","swung","table","taste","teach","teeth","thank",
+    "theme","thick","thing","think","third","thorn","those","three","threw",
+    "throw","thumb","tiger","tight","timer","tired","title","toast","today",
+    "token","topic","total","touch","tough","tower","toxic","trace","track",
+    "trade","trail","train","trait","trash","treat","trend","trial","tribe",
+    "trick","tried","troop","truck","truly","trump","trunk","trust","truth",
+    "tumor","ultra","uncle","under","unify","union","unity","until","upper",
+    "upset","urban","usage","usual","utter","vague","valid","value","valve",
+    "vapor","venue","verse","video","vigor","viral","virus","visit","Vista",
+    "vital","vivid","vocal","vodka","voice","voter","wagon","waste","watch",
+    "water","weary","weave","wheat","wheel","where","which","while","white",
+    "whole","whose","widow","width","witch","woman","world","worry","worse",
+    "worst","worth","wound","wrath","write","wrong","wrote","yacht","yield",
+    "young","youth",
+    "absorb","accept","access","across","action","active","actual","advise",
+    "affect","afford","agenda","almost","amount","animal","annual","answer",
+    "anyone","anyway","appeal","appear","arctic","artist","assume","attach",
+    "attack","attend","august","author","barely","basket","battle","beauty",
+    "became","become","before","behalf","behave","behind","belong","beside",
+    "beyond","bisect","blanch","border","borrow","bottle","bottom","bounce",
+    "branch","breath","bridge","bright","broken","bronze","bubble","bucket",
+    "budget","bundle","burden","bureau","butter","button","camera","cancel",
+    "candle","canvas","carbon","carpet","castle","casual","caught","center",
+    "centre","chance","change","charge","chosen","chrome","circle","client",
+    "climax","closer","closet","clutch","coffee","column","combat","common",
+    "comply","convey","cookie","copper","corner","costly","cotton","county",
+    "couple","course","cousin","Create","credit","crisis","custom","damage",
+    "danger","dealer","debate","decade","decent","defeat","defend","define",
+    "degree","demand","dental","depend","deploy","desert","design","desire",
+    "detail","detect","device","devote","dialog","differ","dinner","direct",
+    "divine","domain","double","dozens","dragon","driven","driver","during",
+    "easily","eating","editor","effect","effort","eighth","emerge","empire",
+    "employ","enable","endure","energy","engage","engine","enough","ensure",
+    "entire","entity","equity","escape","estate","ethnic","evolve","exceed",
+    "except","excuse","exempt","expand","expect","expert","export","expose",
+    "extend","extent","fabric","facial","factor","fairly","fallen","family",
+    "famous","farmer","father","faucet","favore","fellow","female","figure",
+    "filter","finale","finger","finish","fiscal","flight","flower","flying",
+    "follow","forbid","forced","forest","forget","formal","format","former",
+    "fossil","foster","fourth","freeze","french","friday","friend","frozen",
+    "future","gadget","galaxy","garage","garden","gather","gender","gentle",
+    "gifted","ginger","gladly","global","golden","govern","gravel","ground",
+    "growth","guilty","guitar","hammer","handle","happen","hardly","hazard",
+    "health","heaven","height","heroic","hidden","holder","hollow","honest",
+    "horror","hungry","hunter","hybrid","ignore","impact","impose","income",
+    "indeed","indoor","inform","injure","injury","inland","insert","inside",
+    "insist","intact","intend","invest","inward","island","itself","jersey",
+    "jigsaw","joseph","jungle","junior","justly","kidney","knight","ladder",
+    "lambda","laptop","launch","lawyer","layout","leader","league","legacy",
+    "legend","lender","lesson","letter","linear","linger","liquid","listen",
+    "litter","little","lively","living","locker","lonely","lookup","lovely",
+    "luxury","mainly","manage","manner","marble","margin","marine","market",
+    "master","matter","medium","member","memory","mental","mentor","method",
+    "middle","mighty","minute","mirror","mobile","modest","moment","monkey",
+    "mortal","mostly","mother","motion","mutual","myself","namely","narrow",
+    "nation","nature","nearby","neatly","nicely","nobody","normal","notice",
+    "notion","number","object","obtain","occupy","offend","office","online",
+    "opener","option","orange","origin","outfit","output","oxygen","palace",
+    "parent","parish","patrol","patron","pencil","people","period","permit",
+    "person","phrase","pickup","pillar","pillow","pirate","pistol","planet",
+    "player","please","pledge","plenty","pocket","poetry","poison","policy",
+    "polish","polite","poorly","portal","poster","potato","powder","prayer",
+    "prefer","pretty","priest","prison","profit","prompt","proper","proven",
+    "public","puddle","punish","puppet","pursue","puzzle","quarry","racial",
+    "random","ranger","rather","rating","reader","really","reason","recall",
+    "Recent","recipe","record","reduce","reform","regard","regime","region",
+    "regret","reject","relate","relief","reload","remain","remedy","remote",
+    "remove","render","renown","rental","Repair","repeat","replay","report",
+    "rescue","resign","resist","resort","result","resume","retail","retain",
+    "retire","return","reveal","review","revolt","reward","rhythm","Richly",
+    "riding","ritual","robust","rocket","roller","roster","rubber","ruling",
+    "runner","runway","sacred","Safety","salary","salmon","sample","Saving",
+    "scheme","school","screen","script","Search","season","second","secret",
+    "secure","seeing","select","seller","senior","series","server","settle",
+    "severe","shadow","shield","Should","shower","signal","silent","silver",
+    "simple","simply","singer","single","sister","sketch","slight","slowly",
+    "smooth","soccer","social","socket","solely","solemn","source","speech",
+    "sphere","spirit","spoken","spread","spring","square","stable","statue",
+    "status","steady","stolen","strain","strand","streak","stream","street",
+    "stress","strict","strike","string","stroke","strong","struck","studio",
+    "submit","subtle","sudden","suffer","summer","summit","sunset","superb",
+    "supply","surely","survey","switch","symbol","system","tackle","talent",
+    "target","temple","tenant","tender","terror","Thanks","theAry","thirst",
+    "thread","thrill","throne","thrown","timber","tissue","tongue","topped",
+    "toward","travel","treaty","tribal","trophy","tumble","tunnel","twelve",
+    "twenty","Typing","unfair","unfold","unique","united","Unless","unlike",
+    "unlock","unveil","update","Uphold","urgent","useful","vacant","valley",
+    "vanish","Varies","vendor","vessel","viable","victim","Vienna","viewer",
+    "virtue","vision","visual","volume","walker","wallet","wander","warmth",
+    "wealth","weapon","weekly","weight","wholly","wicked","widely","willed",
+    "window","winner","winter","wisdom","within","wonder","worker","worthy",
+    "writer","yellow"
+];
+
+// ─── CANVAS SETUP ────────────────────────────────────────
+var canvas = document.getElementById("c");
+var ctx = canvas.getContext("2d");
+var dpr = window.devicePixelRatio || 1;
+var W, H;
+
+function resize() {
+    dpr = window.devicePixelRatio || 1;
+    W = BASE_W;
+    H = BASE_H;
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    canvas.style.width = W + "px";
+    canvas.style.height = H + "px";
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+resize();
+window.addEventListener("resize", resize);
+
+// ─── GAME STATE ──────────────────────────────────────────
+var PHASE_START   = 0;
+var PHASE_PLAYING = 1;
+var PHASE_WIN     = 2;
+var PHASE_LOSE    = 3;
+
+var phase = PHASE_START;
+var word = "";
+var guessed = {};       // letter -> true
+var wrongCount = 0;
+var streak = 0;
+var animTimer = 0;      // for body part draw-in
+var animPart = -1;      // which part is animating (-1 = none)
+var animProgress = 0;   // 0..1
+var particles = [];
+var winTimer = 0;
+var loseTimer = 0;
+var startPulse = 0;
+var wordGlow = 0;
+
+// Keyboard layout
+var KB_ROWS = ["QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"];
+var KB_KEY_W = 32;
+var KB_KEY_H = 32;
+var KB_GAP   = 4;
+var KB_Y_START = 390;
+
+// Load streak
+function loadStreak() {
+    try { streak = parseInt(localStorage.getItem("hangman_streak")) || 0; } catch(e) { streak = 0; }
+}
+function saveStreak() {
+    try { localStorage.setItem("hangman_streak", streak); } catch(e) {}
+}
+loadStreak();
+
+// ─── UTILITY ─────────────────────────────────────────────
+function pickWord() {
+    return WORDS[Math.floor(Math.random() * WORDS.length)].toUpperCase();
+}
+
+function startGame() {
+    word = pickWord();
+    guessed = {};
+    wrongCount = 0;
+    animPart = -1;
+    animProgress = 0;
+    animTimer = 0;
+    particles = [];
+    winTimer = 0;
+    loseTimer = 0;
+    wordGlow = 0;
+    phase = PHASE_PLAYING;
+}
+
+function getKeyRect(letter) {
+    for (var r = 0; r < KB_ROWS.length; r++) {
+        var row = KB_ROWS[r];
+        var idx = row.indexOf(letter);
+        if (idx < 0) continue;
+        var rowW = row.length * KB_KEY_W + (row.length - 1) * KB_GAP;
+        var startX = (W - rowW) / 2;
+        var x = startX + idx * (KB_KEY_W + KB_GAP);
+        var y = KB_Y_START + r * (KB_KEY_H + KB_GAP);
+        return { x: x, y: y, w: KB_KEY_W, h: KB_KEY_H };
+    }
+    return null;
+}
+
+function guessLetter(letter) {
+    if (phase !== PHASE_PLAYING) return;
+    if (guessed[letter]) return;
+    guessed[letter] = true;
+
+    if (word.indexOf(letter) < 0) {
+        wrongCount++;
+        animPart = wrongCount - 1;
+        animProgress = 0;
+        if (wrongCount >= MAX_WRONG) {
+            phase = PHASE_LOSE;
+            loseTimer = 0;
+            streak = 0;
+            saveStreak();
+        }
+    } else {
+        // Check win
+        var won = true;
+        for (var i = 0; i < word.length; i++) {
+            if (!guessed[word[i]]) { won = false; break; }
+        }
+        if (won) {
+            phase = PHASE_WIN;
+            winTimer = 0;
+            wordGlow = 0;
+            streak++;
+            saveStreak();
+            spawnParticles();
+        }
+    }
+}
+
+// ─── PARTICLES ───────────────────────────────────────────
+function spawnParticles() {
+    particles = [];
+    for (var i = 0; i < 60; i++) {
+        var angle = Math.random() * Math.PI * 2;
+        var speed = 1 + Math.random() * 3;
+        particles.push({
+            x: W / 2,
+            y: 200,
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed - 1,
+            life: 1,
+            decay: 0.005 + Math.random() * 0.01,
+            color: [CYAN, PURPLE, YELLOW, GREEN][Math.floor(Math.random() * 4)],
+            size: 2 + Math.random() * 3
+        });
+    }
+}
+
+function updateParticles(dt) {
+    for (var i = particles.length - 1; i >= 0; i--) {
+        var p = particles[i];
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += 0.03;
+        p.life -= p.decay;
+        if (p.life <= 0) particles.splice(i, 1);
+    }
+}
+
+function drawParticles() {
+    for (var i = 0; i < particles.length; i++) {
+        var p = particles[i];
+        ctx.globalAlpha = p.life;
+        ctx.fillStyle = p.color;
+        ctx.shadowColor = p.color;
+        ctx.shadowBlur = 8;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 0;
+}
+
+// ─── DRAW HANGMAN FIGURE ─────────────────────────────────
+// Gallows position
+var GX = 150, GY = 60;
+
+function drawGallows() {
+    ctx.strokeStyle = DIM;
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
+    ctx.shadowBlur = 0;
+    // base
+    ctx.beginPath();
+    ctx.moveTo(GX - 50, GY + 200);
+    ctx.lineTo(GX + 50, GY + 200);
+    ctx.stroke();
+    // pole
+    ctx.beginPath();
+    ctx.moveTo(GX, GY + 200);
+    ctx.lineTo(GX, GY);
+    ctx.stroke();
+    // top bar
+    ctx.beginPath();
+    ctx.moveTo(GX, GY);
+    ctx.lineTo(GX + 70, GY);
+    ctx.stroke();
+    // rope
+    ctx.beginPath();
+    ctx.moveTo(GX + 70, GY);
+    ctx.lineTo(GX + 70, GY + 30);
+    ctx.stroke();
+}
+
+function drawBodyPart(partIndex, progress) {
+    var cx = GX + 70;
+    var headY = GY + 30;
+    var headR = 16;
+    var bodyTop = headY + headR;
+    var bodyBot = bodyTop + 50;
+
+    ctx.strokeStyle = CYAN;
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = "round";
+    ctx.shadowColor = CYAN;
+    ctx.shadowBlur = 12;
+
+    var p = Math.min(progress, 1);
+
+    switch(partIndex) {
+        case 0: // head
+            ctx.beginPath();
+            ctx.arc(cx, headY + headR, headR, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * p);
+            ctx.stroke();
+            break;
+        case 1: // body
+            ctx.beginPath();
+            ctx.moveTo(cx, bodyTop);
+            ctx.lineTo(cx, bodyTop + 50 * p);
+            ctx.stroke();
+            break;
+        case 2: // left arm
+            ctx.beginPath();
+            ctx.moveTo(cx, bodyTop + 15);
+            var endX = cx - 25 * p;
+            var endY = bodyTop + 15 + 30 * p;
+            ctx.lineTo(endX, endY);
+            ctx.stroke();
+            break;
+        case 3: // right arm
+            ctx.beginPath();
+            ctx.moveTo(cx, bodyTop + 15);
+            var endX2 = cx + 25 * p;
+            var endY2 = bodyTop + 15 + 30 * p;
+            ctx.lineTo(endX2, endY2);
+            ctx.stroke();
+            break;
+        case 4: // left leg
+            ctx.beginPath();
+            ctx.moveTo(cx, bodyBot);
+            var lx = cx - 20 * p;
+            var ly = bodyBot + 35 * p;
+            ctx.lineTo(lx, ly);
+            ctx.stroke();
+            break;
+        case 5: // right leg
+            ctx.beginPath();
+            ctx.moveTo(cx, bodyBot);
+            var rx = cx + 20 * p;
+            var ry = bodyBot + 35 * p;
+            ctx.lineTo(rx, ry);
+            ctx.stroke();
+            break;
+    }
+    ctx.shadowBlur = 0;
+}
+
+function drawHangman() {
+    drawGallows();
+    // Draw completed parts
+    for (var i = 0; i < wrongCount; i++) {
+        if (i === animPart) {
+            drawBodyPart(i, animProgress);
+        } else if (i < animPart || animPart < 0) {
+            drawBodyPart(i, 1);
+        } else {
+            drawBodyPart(i, 1);
+        }
+    }
+}
+
+// ─── DRAW WORD ───────────────────────────────────────────
+function drawWord() {
+    var letterSpacing = 30;
+    var totalW = word.length * letterSpacing;
+    var startX = (W - totalW) / 2 + letterSpacing / 2;
+    var y = 330;
+
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+
+    for (var i = 0; i < word.length; i++) {
+        var x = startX + i * letterSpacing;
+        var letter = word[i];
+        var revealed = guessed[letter];
+
+        // underscore
+        ctx.strokeStyle = DIM;
+        ctx.lineWidth = 2;
+        ctx.shadowBlur = 0;
+        ctx.beginPath();
+        ctx.moveTo(x - 10, y + 14);
+        ctx.lineTo(x + 10, y + 14);
+        ctx.stroke();
+
+        if (revealed) {
+            ctx.font = "bold 22px " + FONT;
+            if (phase === PHASE_WIN) {
+                var glow = 6 + Math.sin(wordGlow * 3 + i * 0.5) * 4;
+                ctx.shadowColor = CYAN;
+                ctx.shadowBlur = glow;
+                ctx.fillStyle = CYAN;
+            } else {
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = CYAN;
+            }
+            ctx.fillText(letter, x, y);
+            ctx.shadowBlur = 0;
+        } else if (phase === PHASE_LOSE) {
+            ctx.font = "bold 22px " + FONT;
+            ctx.fillStyle = RED;
+            ctx.shadowColor = RED;
+            ctx.shadowBlur = 6;
+            ctx.fillText(letter, x, y);
+            ctx.shadowBlur = 0;
+        }
+    }
+}
+
+// ─── DRAW KEYBOARD ──────────────────────────────────────
+function drawKeyboard() {
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = "bold 14px " + FONT;
+
+    for (var r = 0; r < KB_ROWS.length; r++) {
+        var row = KB_ROWS[r];
+        var rowW = row.length * KB_KEY_W + (row.length - 1) * KB_GAP;
+        var startX = (W - rowW) / 2;
+
+        for (var c = 0; c < row.length; c++) {
+            var letter = row[c];
+            var x = startX + c * (KB_KEY_W + KB_GAP);
+            var y = KB_Y_START + r * (KB_KEY_H + KB_GAP);
+            var used = guessed[letter];
+            var correct = used && word.indexOf(letter) >= 0;
+            var wrong = used && word.indexOf(letter) < 0;
+
+            // Background
+            ctx.fillStyle = wrong ? "rgba(255,107,107,0.12)" :
+                            correct ? "rgba(34,197,94,0.12)" :
+                            "rgba(255,255,255,0.04)";
+            ctx.shadowBlur = 0;
+            roundRect(ctx, x, y, KB_KEY_W, KB_KEY_H, 4);
+            ctx.fill();
+
+            // Border
+            ctx.strokeStyle = wrong ? "rgba(255,107,107,0.4)" :
+                              correct ? "rgba(34,197,94,0.4)" :
+                              "rgba(255,255,255,0.1)";
+            ctx.lineWidth = 1;
+            roundRect(ctx, x, y, KB_KEY_W, KB_KEY_H, 4);
+            ctx.stroke();
+
+            // Letter
+            ctx.fillStyle = wrong ? RED :
+                            correct ? GREEN :
+                            WHITE;
+            if (wrong) {
+                ctx.globalAlpha = 0.4;
+            }
+            ctx.fillText(letter, x + KB_KEY_W / 2, y + KB_KEY_H / 2);
+            ctx.globalAlpha = 1;
+
+            // Strikethrough for wrong
+            if (wrong) {
+                ctx.strokeStyle = RED;
+                ctx.lineWidth = 1.5;
+                ctx.globalAlpha = 0.6;
+                ctx.beginPath();
+                ctx.moveTo(x + 6, y + KB_KEY_H / 2);
+                ctx.lineTo(x + KB_KEY_W - 6, y + KB_KEY_H / 2);
+                ctx.stroke();
+                ctx.globalAlpha = 1;
+            }
+        }
+    }
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.arcTo(x + w, y, x + w, y + r, r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+    ctx.lineTo(x + r, y + h);
+    ctx.arcTo(x, y + h, x, y + h - r, r);
+    ctx.lineTo(x, y + r);
+    ctx.arcTo(x, y, x + r, y, r);
+    ctx.closePath();
+}
+
+// ─── DRAW HUD ────────────────────────────────────────────
+function drawHUD() {
+    // Wrong count
+    ctx.textAlign = "right";
+    ctx.textBaseline = "top";
+    ctx.font = "12px " + FONT;
+    ctx.fillStyle = wrongCount > 0 ? RED : DIM;
+    ctx.shadowBlur = 0;
+    ctx.fillText("MISSES: " + wrongCount + "/" + MAX_WRONG, W - 20, 20);
+
+    // Streak
+    ctx.textAlign = "left";
+    ctx.fillStyle = streak > 0 ? YELLOW : DIM;
+    if (streak > 0) {
+        ctx.shadowColor = YELLOW;
+        ctx.shadowBlur = 4;
+    }
+    ctx.fillText("STREAK: " + streak, 20, 20);
+    ctx.shadowBlur = 0;
+}
+
+// ─── SCREENS ─────────────────────────────────────────────
+function drawStartScreen(t) {
+    startPulse += 0.03;
+
+    // Title
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = "bold 42px " + FONT;
+    ctx.fillStyle = CYAN;
+    ctx.shadowColor = CYAN;
+    ctx.shadowBlur = 20;
+    ctx.fillText("HANGMAN", W / 2, 160);
+    ctx.shadowBlur = 0;
+
+    // Subtitle
+    ctx.font = "14px " + FONT;
+    ctx.fillStyle = DIM;
+    ctx.fillText("A classic word guessing game", W / 2, 210);
+
+    // Start prompt
+    var pulse = 0.5 + 0.5 * Math.sin(startPulse);
+    ctx.font = "16px " + FONT;
+    ctx.fillStyle = "rgba(0,255,200," + (0.4 + pulse * 0.6) + ")";
+    ctx.shadowColor = CYAN;
+    ctx.shadowBlur = 8 * pulse;
+    ctx.fillText("PRESS ANY KEY OR CLICK TO START", W / 2, 320);
+    ctx.shadowBlur = 0;
+
+    // Streak
+    if (streak > 0) {
+        ctx.font = "13px " + FONT;
+        ctx.fillStyle = YELLOW;
+        ctx.shadowColor = YELLOW;
+        ctx.shadowBlur = 6;
+        ctx.fillText("WIN STREAK: " + streak, W / 2, 380);
+        ctx.shadowBlur = 0;
+    }
+
+    // Draw a decorative mini gallows
+    ctx.save();
+    ctx.translate(W / 2 - 35, 40);
+    ctx.strokeStyle = "rgba(255,255,255,0.08)";
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(-20, 80); ctx.lineTo(20, 80); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, 80); ctx.lineTo(0, 0); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, 0); ctx.lineTo(35, 0); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(35, 0); ctx.lineTo(35, 15); ctx.stroke();
+    ctx.restore();
+}
+
+function drawWinScreen() {
+    winTimer += 0.02;
+    wordGlow += 0.05;
+
+    drawHangman();
+    drawWord();
+    drawKeyboard();
+    drawHUD();
+    updateParticles();
+    drawParticles();
+
+    // Overlay
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = "bold 28px " + FONT;
+    ctx.fillStyle = GREEN;
+    ctx.shadowColor = GREEN;
+    ctx.shadowBlur = 15;
+    ctx.fillText("YOU WIN!", W / 2, 50);
+    ctx.shadowBlur = 0;
+
+    if (winTimer > 1.5) {
+        var pulse = 0.5 + 0.5 * Math.sin(winTimer * 3);
+        ctx.font = "13px " + FONT;
+        ctx.fillStyle = "rgba(0,255,200," + (0.4 + pulse * 0.6) + ")";
+        ctx.fillText("PRESS ANY KEY OR CLICK FOR NEXT WORD", W / 2, H - 30);
+    }
+}
+
+function drawLoseScreen() {
+    loseTimer += 0.02;
+
+    drawHangman();
+    drawWord();
+    drawKeyboard();
+    drawHUD();
+
+    // Overlay
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = "bold 28px " + FONT;
+    ctx.fillStyle = RED;
+    ctx.shadowColor = RED;
+    ctx.shadowBlur = 15;
+    ctx.fillText("GAME OVER", W / 2, 50);
+    ctx.shadowBlur = 0;
+
+    if (loseTimer > 1.5) {
+        var pulse = 0.5 + 0.5 * Math.sin(loseTimer * 3);
+        ctx.font = "13px " + FONT;
+        ctx.fillStyle = "rgba(255,107,107," + (0.4 + pulse * 0.6) + ")";
+        ctx.fillText("PRESS ANY KEY OR CLICK TO TRY AGAIN", W / 2, H - 30);
+    }
+}
+
+// ─── MAIN LOOP ──────────────────────────────────────────
+var lastTime = 0;
+
+function loop(timestamp) {
+    var dt = (timestamp - lastTime) / 1000;
+    lastTime = timestamp;
+    if (dt > 0.1) dt = 0.1;
+
+    // Clear
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = BG;
+    ctx.fillRect(0, 0, W, H);
+
+    // Animate body part
+    if (animPart >= 0 && animProgress < 1) {
+        animProgress += dt * 4;
+        if (animProgress > 1) animProgress = 1;
+    }
+
+    switch(phase) {
+        case PHASE_START:
+            drawStartScreen(timestamp);
+            break;
+        case PHASE_PLAYING:
+            drawHangman();
+            drawWord();
+            drawKeyboard();
+            drawHUD();
+            break;
+        case PHASE_WIN:
+            drawWinScreen();
+            break;
+        case PHASE_LOSE:
+            drawLoseScreen();
+            break;
+    }
+
+    requestAnimationFrame(loop);
+}
+
+requestAnimationFrame(function(ts) {
+    lastTime = ts;
+    loop(ts);
+});
+
+// ─── INPUT ──────────────────────────────────────────────
+function handleLetterInput(letter) {
+    letter = letter.toUpperCase();
+    if (letter.length === 1 && letter >= "A" && letter <= "Z") {
+        if (phase === PHASE_PLAYING) {
+            guessLetter(letter);
+        } else if (phase === PHASE_START) {
+            startGame();
+        } else if ((phase === PHASE_WIN && winTimer > 1.5) || (phase === PHASE_LOSE && loseTimer > 1.5)) {
+            startGame();
+        }
+    }
+}
+
+document.addEventListener("keydown", function(e) {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    var key = e.key;
+    if (key.length === 1 && key >= "a" && key <= "z" || key >= "A" && key <= "Z") {
+        handleLetterInput(key);
+    } else if (key === "Enter" || key === " ") {
+        if (phase === PHASE_START) {
+            startGame();
+        } else if ((phase === PHASE_WIN && winTimer > 1.5) || (phase === PHASE_LOSE && loseTimer > 1.5)) {
+            startGame();
+        }
+    }
+});
+
+canvas.addEventListener("click", function(e) {
+    var rect = canvas.getBoundingClientRect();
+    var mx = (e.clientX - rect.left) * (W / rect.width);
+    var my = (e.clientY - rect.top) * (H / rect.height);
+
+    if (phase === PHASE_START) {
+        startGame();
+        return;
+    }
+
+    if ((phase === PHASE_WIN && winTimer > 1.5) || (phase === PHASE_LOSE && loseTimer > 1.5)) {
+        startGame();
+        return;
+    }
+
+    if (phase === PHASE_PLAYING) {
+        // Check keyboard hit
+        for (var r = 0; r < KB_ROWS.length; r++) {
+            var row = KB_ROWS[r];
+            for (var c = 0; c < row.length; c++) {
+                var letter = row[c];
+                var kr = getKeyRect(letter);
+                if (kr && mx >= kr.x && mx <= kr.x + kr.w && my >= kr.y && my <= kr.y + kr.h) {
+                    guessLetter(letter);
+                    return;
+                }
+            }
+        }
+    }
+});
+
+// Prevent scrolling on space
+document.addEventListener("keydown", function(e) {
+    if (e.key === " ") e.preventDefault();
+});
+
+})();
+</script>
+</body>
+</html>

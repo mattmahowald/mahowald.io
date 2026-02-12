@@ -1,0 +1,1154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>BATTLESHIP - mahowald.io</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: #0a0a1a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: "SF Mono", "Fira Code", "Courier New", monospace;
+    -webkit-user-select: none;
+    user-select: none;
+}
+canvas {
+    display: block;
+    border-radius: 4px;
+    box-shadow: 0 0 40px rgba(0,255,200,0.08), 0 0 80px rgba(0,255,200,0.04), 0 0 120px rgba(0,255,200,0.02), 0 4px 30px rgba(0,0,0,0.6);
+}
+.back-link {
+    position: fixed; top: 16px; left: 16px;
+    color: #00ffc8; text-decoration: none;
+    font-family: "SF Mono", "Fira Code", "Courier New", monospace;
+    font-size: 14px; z-index: 100; opacity: 0.7; transition: opacity 0.2s;
+}
+.back-link:hover { opacity: 1; }
+</style>
+</head>
+<body>
+<a href="/" class="back-link">&larr; BACK</a>
+<canvas id="c"></canvas>
+<script>
+(function() { "use strict";
+
+// --- Colors ---
+const BG      = "#0a0a1a";
+const CYAN    = "#00ffc8";
+const PURPLE  = "#a855f7";
+const YELLOW  = "#ffd93d";
+const RED     = "#ff6b6b";
+const BLUE    = "#3b82f6";
+const FONT    = '"SF Mono", "Fira Code", "Courier New", monospace';
+
+// --- Grid constants ---
+const GRID_SIZE = 10;
+const SHIPS = [
+    { name: "Carrier",    len: 5 },
+    { name: "Battleship", len: 4 },
+    { name: "Cruiser",    len: 3 },
+    { name: "Submarine",  len: 3 },
+    { name: "Destroyer",  len: 2 }
+];
+
+// --- Phases ---
+const PHASE_TITLE    = 0;
+const PHASE_PLACING  = 1;
+const PHASE_PLAYING  = 2;
+const PHASE_AI_TURN  = 3;
+const PHASE_GAME_OVER = 4;
+
+// --- Canvas setup ---
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+let dpr = 1;
+
+// Layout measurements (computed in resize)
+let CELL = 28;
+let LABEL_W = 22;
+let LABEL_H = 18;
+let GAP = 30;
+let HUD_H = 44;
+let BOTTOM_H = 36;
+let canvasW = 700, canvasH = 420;
+
+// Grid origins
+let playerGridX = 0, playerGridY = 0;
+let aiGridX = 0, aiGridY = 0;
+
+function computeLayout() {
+    const gridPx = GRID_SIZE * CELL;
+    canvasW = LABEL_W + gridPx + GAP + LABEL_W + gridPx + 10;
+    canvasH = HUD_H + LABEL_H + gridPx + BOTTOM_H;
+    playerGridX = LABEL_W;
+    playerGridY = HUD_H + LABEL_H;
+    aiGridX = LABEL_W + gridPx + GAP + LABEL_W;
+    aiGridY = HUD_H + LABEL_H;
+}
+
+function resize() {
+    dpr = window.devicePixelRatio || 1;
+    const maxW = window.innerWidth - 32;
+    const maxH = window.innerHeight - 32;
+
+    // Try to fit with default CELL=28
+    CELL = 28;
+    LABEL_W = 22; LABEL_H = 18; GAP = 30; HUD_H = 44; BOTTOM_H = 36;
+    computeLayout();
+
+    // Scale down if needed
+    if (canvasW > maxW || canvasH > maxH) {
+        const scaleW = maxW / canvasW;
+        const scaleH = maxH / canvasH;
+        const scale = Math.min(scaleW, scaleH);
+        CELL = Math.max(16, Math.floor(CELL * scale));
+        LABEL_W = Math.max(14, Math.floor(22 * scale));
+        LABEL_H = Math.max(12, Math.floor(18 * scale));
+        GAP = Math.max(12, Math.floor(30 * scale));
+        HUD_H = Math.max(28, Math.floor(44 * scale));
+        BOTTOM_H = Math.max(22, Math.floor(36 * scale));
+        computeLayout();
+    }
+
+    canvas.width = canvasW * dpr;
+    canvas.height = canvasH * dpr;
+    canvas.style.width = canvasW + "px";
+    canvas.style.height = canvasH + "px";
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+window.addEventListener("resize", resize);
+resize();
+
+// --- Game state ---
+let phase = PHASE_TITLE;
+let playerBoard = [];   // 10x10: { ship: null|index, hit: false }
+let aiBoard = [];       // 10x10: { ship: null|index, hit: false }
+let playerShots = [];   // 10x10: 0=unknown, 1=miss, 2=hit
+let aiShots = [];       // 10x10: 0=unknown, 1=miss, 2=hit
+let playerShips = [];   // placed ship objects: { index, row, col, horizontal, len, hits, sunk }
+let aiShips = [];
+let placingIndex = 0;
+let placingHorizontal = true;
+let hoverCell = null;   // { row, col } on AI grid
+let playerTurn = true;
+let aiThinkTimer = 0;
+let winner = "";        // "player" or "ai"
+let gameOverTime = 0;
+let turnMessage = "";
+let turnMessageTime = 0;
+let lastSunkShip = null;
+let lastSunkTime = 0;
+
+// AI hunting state
+let aiHuntStack = [];   // cells to try after a hit
+let aiHitCells = [];    // cells that were hits (for direction logic)
+
+// Particles
+let particles = [];
+
+// Water animation
+let waterTime = 0;
+
+// Stats
+let stats = loadStats();
+
+// --- Helpers ---
+function makeBoard() {
+    const b = [];
+    for (let r = 0; r < GRID_SIZE; r++) {
+        b[r] = [];
+        for (let c = 0; c < GRID_SIZE; c++) {
+            b[r][c] = { ship: null, hit: false };
+        }
+    }
+    return b;
+}
+
+function makeShotGrid() {
+    const g = [];
+    for (let r = 0; r < GRID_SIZE; r++) {
+        g[r] = [];
+        for (let c = 0; c < GRID_SIZE; c++) {
+            g[r][c] = 0;
+        }
+    }
+    return g;
+}
+
+function canPlace(board, ships, row, col, horizontal, len) {
+    for (let i = 0; i < len; i++) {
+        const r = horizontal ? row : row + i;
+        const c = horizontal ? col + i : col;
+        if (r < 0 || r >= GRID_SIZE || c < 0 || c >= GRID_SIZE) return false;
+        if (board[r][c].ship !== null) return false;
+    }
+    return true;
+}
+
+function placeShip(board, ships, index, row, col, horizontal, len) {
+    const ship = { index: index, row: row, col: col, horizontal: horizontal, len: len, hits: 0, sunk: false };
+    for (let i = 0; i < len; i++) {
+        const r = horizontal ? row : row + i;
+        const c = horizontal ? col + i : col;
+        board[r][c].ship = ships.length;
+    }
+    ships.push(ship);
+}
+
+function placeShipsRandomly(board, ships) {
+    for (let s = 0; s < SHIPS.length; s++) {
+        let placed = false;
+        let attempts = 0;
+        while (!placed && attempts < 1000) {
+            attempts++;
+            const h = Math.random() < 0.5;
+            const r = Math.floor(Math.random() * GRID_SIZE);
+            const c = Math.floor(Math.random() * GRID_SIZE);
+            if (canPlace(board, ships, r, c, h, SHIPS[s].len)) {
+                placeShip(board, ships, s, r, c, h, SHIPS[s].len);
+                placed = true;
+            }
+        }
+    }
+}
+
+function allSunk(ships) {
+    return ships.length === SHIPS.length && ships.every(function(s) { return s.sunk; });
+}
+
+function loadStats() {
+    try {
+        const raw = localStorage.getItem("battleship_stats");
+        if (raw) return JSON.parse(raw);
+    } catch(e) {}
+    return { wins: 0, losses: 0 };
+}
+
+function saveStats() {
+    try {
+        localStorage.setItem("battleship_stats", JSON.stringify(stats));
+    } catch(e) {}
+}
+
+// --- Particles ---
+function spawnParticles(x, y, count, color, speed) {
+    for (let i = 0; i < count; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const vel = speed * (0.3 + Math.random() * 0.7);
+        particles.push({
+            x: x, y: y,
+            vx: Math.cos(angle) * vel,
+            vy: Math.sin(angle) * vel,
+            life: 1,
+            decay: 0.01 + Math.random() * 0.02,
+            size: 1.5 + Math.random() * 2.5,
+            color: color
+        });
+    }
+}
+
+function spawnSinkParticles(ship, gridX, gridY) {
+    for (let i = 0; i < ship.len; i++) {
+        const r = ship.horizontal ? ship.row : ship.row + i;
+        const c = ship.horizontal ? ship.col + i : ship.col;
+        const cx = gridX + c * CELL + CELL / 2;
+        const cy = gridY + r * CELL + CELL / 2;
+        spawnParticles(cx, cy, 12, YELLOW, 80);
+        spawnParticles(cx, cy, 8, RED, 60);
+    }
+}
+
+function updateParticles(dt) {
+    for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.vy += 60 * dt;
+        p.life -= p.decay;
+        if (p.life <= 0) particles.splice(i, 1);
+    }
+}
+
+function drawParticles() {
+    for (let i = 0; i < particles.length; i++) {
+        const p = particles[i];
+        ctx.globalAlpha = Math.max(0, p.life);
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+}
+
+// --- Init game ---
+function initGame() {
+    playerBoard = makeBoard();
+    aiBoard = makeBoard();
+    playerShots = makeShotGrid();
+    aiShots = makeShotGrid();
+    playerShips = [];
+    aiShips = [];
+    placingIndex = 0;
+    placingHorizontal = true;
+    hoverCell = null;
+    playerTurn = true;
+    aiThinkTimer = 0;
+    winner = "";
+    gameOverTime = 0;
+    turnMessage = "";
+    turnMessageTime = 0;
+    lastSunkShip = null;
+    lastSunkTime = 0;
+    aiHuntStack = [];
+    aiHitCells = [];
+    particles = [];
+
+    // AI places ships
+    placeShipsRandomly(aiBoard, aiShips);
+
+    phase = PHASE_PLACING;
+}
+
+// --- Player shooting ---
+function playerShoot(row, col) {
+    if (playerShots[row][col] !== 0) return false;
+    const cell = aiBoard[row][col];
+    cell.hit = true;
+    if (cell.ship !== null) {
+        playerShots[row][col] = 2; // hit
+        const ship = aiShips[cell.ship];
+        ship.hits++;
+        turnMessage = "HIT!";
+        turnMessageTime = performance.now();
+
+        const cx = aiGridX + col * CELL + CELL / 2;
+        const cy = aiGridY + row * CELL + CELL / 2;
+        spawnParticles(cx, cy, 15, RED, 60);
+
+        if (ship.hits >= ship.len) {
+            ship.sunk = true;
+            lastSunkShip = ship;
+            lastSunkTime = performance.now();
+            turnMessage = SHIPS[ship.index].name.toUpperCase() + " SUNK!";
+            turnMessageTime = performance.now();
+            spawnSinkParticles(ship, aiGridX, aiGridY);
+
+            if (allSunk(aiShips)) {
+                winner = "player";
+                phase = PHASE_GAME_OVER;
+                gameOverTime = performance.now();
+                stats.wins++;
+                saveStats();
+                return true;
+            }
+        }
+    } else {
+        playerShots[row][col] = 1; // miss
+        turnMessage = "MISS";
+        turnMessageTime = performance.now();
+    }
+    return true;
+}
+
+// --- AI shooting logic ---
+function aiChooseTarget() {
+    // If hunting, try from hunt stack
+    while (aiHuntStack.length > 0) {
+        const target = aiHuntStack.pop();
+        if (target.row >= 0 && target.row < GRID_SIZE &&
+            target.col >= 0 && target.col < GRID_SIZE &&
+            aiShots[target.row][target.col] === 0) {
+            return target;
+        }
+    }
+
+    // Random shot (prefer checkerboard pattern for efficiency)
+    var candidates = [];
+    for (var r = 0; r < GRID_SIZE; r++) {
+        for (var c = 0; c < GRID_SIZE; c++) {
+            if (aiShots[r][c] === 0 && (r + c) % 2 === 0) {
+                candidates.push({ row: r, col: c });
+            }
+        }
+    }
+    if (candidates.length === 0) {
+        // Fill in odd squares
+        for (var r2 = 0; r2 < GRID_SIZE; r2++) {
+            for (var c2 = 0; c2 < GRID_SIZE; c2++) {
+                if (aiShots[r2][c2] === 0) {
+                    candidates.push({ row: r2, col: c2 });
+                }
+            }
+        }
+    }
+    if (candidates.length === 0) return null;
+    return candidates[Math.floor(Math.random() * candidates.length)];
+}
+
+function aiShoot() {
+    var target = aiChooseTarget();
+    if (!target) return;
+
+    var row = target.row, col = target.col;
+    var cell = playerBoard[row][col];
+    cell.hit = true;
+
+    if (cell.ship !== null) {
+        aiShots[row][col] = 2;
+        var ship = playerShips[cell.ship];
+        ship.hits++;
+        turnMessage = "AI HITS!";
+        turnMessageTime = performance.now();
+
+        var cx = playerGridX + col * CELL + CELL / 2;
+        var cy = playerGridY + row * CELL + CELL / 2;
+        spawnParticles(cx, cy, 15, RED, 60);
+
+        // Add adjacent cells to hunt stack
+        aiHitCells.push({ row: row, col: col, shipIdx: cell.ship });
+
+        // Smart hunting: determine direction from hits on same ship
+        var sameShipHits = [];
+        for (var i = 0; i < aiHitCells.length; i++) {
+            if (aiHitCells[i].shipIdx === cell.ship) {
+                sameShipHits.push(aiHitCells[i]);
+            }
+        }
+
+        if (sameShipHits.length >= 2) {
+            // Determine direction and extend in that direction
+            var isHorizontal = sameShipHits[0].row === sameShipHits[1].row;
+            if (isHorizontal) {
+                var minC = GRID_SIZE, maxC = -1;
+                for (var j = 0; j < sameShipHits.length; j++) {
+                    if (sameShipHits[j].col < minC) minC = sameShipHits[j].col;
+                    if (sameShipHits[j].col > maxC) maxC = sameShipHits[j].col;
+                }
+                // Clear hunt stack of non-directional targets for this ship
+                aiHuntStack = [];
+                aiHuntStack.push({ row: row, col: minC - 1 });
+                aiHuntStack.push({ row: row, col: maxC + 1 });
+            } else {
+                var minR = GRID_SIZE, maxR = -1;
+                for (var k = 0; k < sameShipHits.length; k++) {
+                    if (sameShipHits[k].row < minR) minR = sameShipHits[k].row;
+                    if (sameShipHits[k].row > maxR) maxR = sameShipHits[k].row;
+                }
+                aiHuntStack = [];
+                aiHuntStack.push({ row: minR - 1, col: col });
+                aiHuntStack.push({ row: maxR + 1, col: col });
+            }
+        } else {
+            // First hit: try all 4 directions
+            aiHuntStack.push({ row: row - 1, col: col });
+            aiHuntStack.push({ row: row + 1, col: col });
+            aiHuntStack.push({ row: row, col: col - 1 });
+            aiHuntStack.push({ row: row, col: col + 1 });
+        }
+
+        if (ship.hits >= ship.len) {
+            ship.sunk = true;
+            lastSunkShip = ship;
+            lastSunkTime = performance.now();
+            turnMessage = "AI SUNK YOUR " + SHIPS[ship.index].name.toUpperCase() + "!";
+            turnMessageTime = performance.now();
+            spawnSinkParticles(ship, playerGridX, playerGridY);
+
+            // Clear hunt data for this ship
+            var newHitCells = [];
+            for (var m = 0; m < aiHitCells.length; m++) {
+                if (aiHitCells[m].shipIdx !== cell.ship) {
+                    newHitCells.push(aiHitCells[m]);
+                }
+            }
+            aiHitCells = newHitCells;
+            aiHuntStack = [];
+
+            // If there are still unsunk hits, re-add their adjacents
+            for (var n = 0; n < aiHitCells.length; n++) {
+                var h = aiHitCells[n];
+                aiHuntStack.push({ row: h.row - 1, col: h.col });
+                aiHuntStack.push({ row: h.row + 1, col: h.col });
+                aiHuntStack.push({ row: h.row, col: h.col - 1 });
+                aiHuntStack.push({ row: h.row, col: h.col + 1 });
+            }
+
+            if (allSunk(playerShips)) {
+                winner = "ai";
+                phase = PHASE_GAME_OVER;
+                gameOverTime = performance.now();
+                stats.losses++;
+                saveStats();
+            }
+        }
+    } else {
+        aiShots[row][col] = 1;
+        turnMessage = "AI MISSES";
+        turnMessageTime = performance.now();
+    }
+}
+
+// --- Input ---
+let mouseX = -1, mouseY = -1;
+
+function getCellAt(px, py, gridX, gridY) {
+    var rect = canvas.getBoundingClientRect();
+    var x = px - rect.left;
+    var y = py - rect.top;
+    var col = Math.floor((x - gridX) / CELL);
+    var row = Math.floor((y - gridY) / CELL);
+    if (row < 0 || row >= GRID_SIZE || col < 0 || col >= GRID_SIZE) return null;
+    return { row: row, col: col };
+}
+
+canvas.addEventListener("mousemove", function(e) {
+    mouseX = e.clientX;
+    mouseY = e.clientY;
+    if (phase === PHASE_PLAYING) {
+        hoverCell = getCellAt(e.clientX, e.clientY, aiGridX, aiGridY);
+    } else if (phase === PHASE_PLACING) {
+        hoverCell = getCellAt(e.clientX, e.clientY, playerGridX, playerGridY);
+    } else {
+        hoverCell = null;
+    }
+});
+
+canvas.addEventListener("mouseleave", function() {
+    hoverCell = null;
+    mouseX = -1;
+    mouseY = -1;
+});
+
+canvas.addEventListener("click", function(e) {
+    e.preventDefault();
+
+    if (phase === PHASE_TITLE) {
+        initGame();
+        return;
+    }
+
+    if (phase === PHASE_GAME_OVER) {
+        if (performance.now() - gameOverTime > 800) {
+            phase = PHASE_TITLE;
+        }
+        return;
+    }
+
+    if (phase === PHASE_PLACING) {
+        var cell = getCellAt(e.clientX, e.clientY, playerGridX, playerGridY);
+        if (cell && placingIndex < SHIPS.length) {
+            var shipDef = SHIPS[placingIndex];
+            if (canPlace(playerBoard, playerShips, cell.row, cell.col, placingHorizontal, shipDef.len)) {
+                placeShip(playerBoard, playerShips, placingIndex, cell.row, cell.col, placingHorizontal, shipDef.len);
+                placingIndex++;
+                if (placingIndex >= SHIPS.length) {
+                    phase = PHASE_PLAYING;
+                    turnMessage = "YOUR TURN - FIRE!";
+                    turnMessageTime = performance.now();
+                }
+            }
+        }
+        return;
+    }
+
+    if (phase === PHASE_PLAYING && playerTurn) {
+        var aiCell = getCellAt(e.clientX, e.clientY, aiGridX, aiGridY);
+        if (aiCell) {
+            var fired = playerShoot(aiCell.row, aiCell.col);
+            if (fired && phase !== PHASE_GAME_OVER) {
+                playerTurn = false;
+                phase = PHASE_AI_TURN;
+                aiThinkTimer = performance.now() + 600 + Math.random() * 400;
+            }
+        }
+    }
+});
+
+document.addEventListener("keydown", function(e) {
+    if (e.key === "r" || e.key === "R") {
+        if (phase === PHASE_PLACING) {
+            placingHorizontal = !placingHorizontal;
+        }
+    }
+});
+
+// --- Drawing ---
+function drawWater(gridX, gridY, now) {
+    // Subtle animated water background
+    for (var r = 0; r < GRID_SIZE; r++) {
+        for (var c = 0; c < GRID_SIZE; c++) {
+            var x = gridX + c * CELL;
+            var y = gridY + r * CELL;
+
+            // Base ocean color
+            var wave = Math.sin((c * 0.8 + now * 0.001) + r * 0.5) * 0.5 + 0.5;
+            var wave2 = Math.sin((r * 0.6 - now * 0.0008) + c * 0.3) * 0.5 + 0.5;
+            var brightness = 12 + wave * 4 + wave2 * 3;
+            var blueVal = 30 + wave * 10 + wave2 * 8;
+            ctx.fillStyle = "rgb(" + Math.floor(brightness * 0.4) + "," + Math.floor(brightness * 0.6) + "," + Math.floor(blueVal) + ")";
+            ctx.fillRect(x, y, CELL, CELL);
+
+            // Water line shimmer
+            var shimmer = Math.sin((c * 1.2 + now * 0.002) + r * 0.7);
+            if (shimmer > 0.7) {
+                ctx.fillStyle = "rgba(0, 255, 200, " + ((shimmer - 0.7) * 0.08) + ")";
+                ctx.fillRect(x, y, CELL, 1);
+            }
+        }
+    }
+}
+
+function drawGridLines(gridX, gridY) {
+    ctx.strokeStyle = "rgba(0, 255, 200, 0.1)";
+    ctx.lineWidth = 0.5;
+    for (var i = 0; i <= GRID_SIZE; i++) {
+        ctx.beginPath();
+        ctx.moveTo(gridX + i * CELL, gridY);
+        ctx.lineTo(gridX + i * CELL, gridY + GRID_SIZE * CELL);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(gridX, gridY + i * CELL);
+        ctx.lineTo(gridX + GRID_SIZE * CELL, gridY + i * CELL);
+        ctx.stroke();
+    }
+}
+
+function drawLabels(gridX, gridY) {
+    var fontSize = Math.max(8, Math.floor(CELL * 0.36));
+    ctx.font = fontSize + "px " + FONT;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "rgba(0, 255, 200, 0.4)";
+
+    // Column labels: 1-10
+    for (var c = 0; c < GRID_SIZE; c++) {
+        ctx.fillText((c + 1).toString(), gridX + c * CELL + CELL / 2, gridY - LABEL_H / 2);
+    }
+    // Row labels: A-J
+    for (var r = 0; r < GRID_SIZE; r++) {
+        ctx.fillText(String.fromCharCode(65 + r), gridX - LABEL_W / 2, gridY + r * CELL + CELL / 2);
+    }
+}
+
+function drawShip(gridX, gridY, ship, color) {
+    for (var i = 0; i < ship.len; i++) {
+        var r = ship.horizontal ? ship.row : ship.row + i;
+        var c = ship.horizontal ? ship.col + i : ship.col;
+        var x = gridX + c * CELL + 2;
+        var y = gridY + r * CELL + 2;
+        var w = CELL - 4;
+        var h = CELL - 4;
+
+        ctx.fillStyle = color;
+        ctx.beginPath();
+
+        // Rounded ends for first/last segment
+        var radius = 4;
+        if (ship.horizontal) {
+            var rTL = (i === 0) ? radius : 1;
+            var rTR = (i === ship.len - 1) ? radius : 1;
+            var rBR = (i === ship.len - 1) ? radius : 1;
+            var rBL = (i === 0) ? radius : 1;
+            ctx.moveTo(x + rTL, y);
+            ctx.lineTo(x + w - rTR, y);
+            ctx.quadraticCurveTo(x + w, y, x + w, y + rTR);
+            ctx.lineTo(x + w, y + h - rBR);
+            ctx.quadraticCurveTo(x + w, y + h, x + w - rBR, y + h);
+            ctx.lineTo(x + rBL, y + h);
+            ctx.quadraticCurveTo(x, y + h, x, y + h - rBL);
+            ctx.lineTo(x, y + rTL);
+            ctx.quadraticCurveTo(x, y, x + rTL, y);
+        } else {
+            var rTL2 = (i === 0) ? radius : 1;
+            var rTR2 = (i === 0) ? radius : 1;
+            var rBR2 = (i === ship.len - 1) ? radius : 1;
+            var rBL2 = (i === ship.len - 1) ? radius : 1;
+            ctx.moveTo(x + rTL2, y);
+            ctx.lineTo(x + w - rTR2, y);
+            ctx.quadraticCurveTo(x + w, y, x + w, y + rTR2);
+            ctx.lineTo(x + w, y + h - rBR2);
+            ctx.quadraticCurveTo(x + w, y + h, x + w - rBR2, y + h);
+            ctx.lineTo(x + rBL2, y + h);
+            ctx.quadraticCurveTo(x, y + h, x, y + h - rBL2);
+            ctx.lineTo(x, y + rTL2);
+            ctx.quadraticCurveTo(x, y, x + rTL2, y);
+        }
+        ctx.closePath();
+        ctx.fill();
+    }
+}
+
+function drawPlacementGhost(gridX, gridY) {
+    if (placingIndex >= SHIPS.length || !hoverCell) return;
+    var shipDef = SHIPS[placingIndex];
+    var valid = canPlace(playerBoard, playerShips, hoverCell.row, hoverCell.col, placingHorizontal, shipDef.len);
+
+    for (var i = 0; i < shipDef.len; i++) {
+        var r = placingHorizontal ? hoverCell.row : hoverCell.row + i;
+        var c = placingHorizontal ? hoverCell.col + i : hoverCell.col;
+        if (r < 0 || r >= GRID_SIZE || c < 0 || c >= GRID_SIZE) continue;
+        var x = gridX + c * CELL + 2;
+        var y = gridY + r * CELL + 2;
+
+        ctx.globalAlpha = 0.5;
+        ctx.fillStyle = valid ? CYAN : RED;
+        ctx.fillRect(x, y, CELL - 4, CELL - 4);
+        ctx.globalAlpha = 1;
+    }
+}
+
+function drawHitMarker(cx, cy, now) {
+    // Red X with glow
+    var s = CELL * 0.3;
+    ctx.strokeStyle = RED;
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = "round";
+    ctx.shadowColor = RED;
+    ctx.shadowBlur = 6;
+    ctx.beginPath();
+    ctx.moveTo(cx - s, cy - s);
+    ctx.lineTo(cx + s, cy + s);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(cx + s, cy - s);
+    ctx.lineTo(cx - s, cy + s);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // Explosion ring
+    var pulse = Math.sin(now * 0.004) * 0.2 + 0.8;
+    ctx.strokeStyle = "rgba(255, 107, 107, " + (0.15 * pulse) + ")";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(cx, cy, CELL * 0.4, 0, Math.PI * 2);
+    ctx.stroke();
+}
+
+function drawMissMarker(cx, cy) {
+    ctx.fillStyle = "rgba(150, 150, 170, 0.5)";
+    ctx.beginPath();
+    ctx.arc(cx, cy, CELL * 0.14, 0, Math.PI * 2);
+    ctx.fill();
+}
+
+function drawPlayerGrid(now) {
+    var gx = playerGridX, gy = playerGridY;
+
+    drawWater(gx, gy, now);
+    drawGridLines(gx, gy);
+    drawLabels(gx, gy);
+
+    // Draw player ships
+    for (var s = 0; s < playerShips.length; s++) {
+        var ship = playerShips[s];
+        if (ship.sunk) {
+            drawShip(gx, gy, ship, "rgba(255, 107, 107, 0.4)");
+        } else {
+            drawShip(gx, gy, ship, "rgba(0, 255, 200, 0.35)");
+        }
+    }
+
+    // Placement ghost
+    if (phase === PHASE_PLACING) {
+        drawPlacementGhost(gx, gy);
+    }
+
+    // Draw shots on player grid (AI's shots)
+    for (var r = 0; r < GRID_SIZE; r++) {
+        for (var c = 0; c < GRID_SIZE; c++) {
+            var cx = gx + c * CELL + CELL / 2;
+            var cy = gy + r * CELL + CELL / 2;
+            if (aiShots[r][c] === 2) {
+                drawHitMarker(cx, cy, now);
+            } else if (aiShots[r][c] === 1) {
+                drawMissMarker(cx, cy);
+            }
+        }
+    }
+
+    // Grid title
+    var titleFS = Math.max(8, Math.floor(CELL * 0.38));
+    ctx.font = "bold " + titleFS + "px " + FONT;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.fillStyle = CYAN;
+    ctx.fillText("YOUR FLEET", gx + GRID_SIZE * CELL / 2, gy + GRID_SIZE * CELL + 4);
+}
+
+function drawAIGrid(now) {
+    var gx = aiGridX, gy = aiGridY;
+
+    drawWater(gx, gy, now);
+    drawGridLines(gx, gy);
+    drawLabels(gx, gy);
+
+    // Draw sunk AI ships (revealed)
+    for (var s = 0; s < aiShips.length; s++) {
+        if (aiShips[s].sunk) {
+            drawShip(gx, gy, aiShips[s], "rgba(255, 107, 107, 0.4)");
+        }
+    }
+
+    // Draw shots
+    for (var r = 0; r < GRID_SIZE; r++) {
+        for (var c = 0; c < GRID_SIZE; c++) {
+            var cx = gx + c * CELL + CELL / 2;
+            var cy = gy + r * CELL + CELL / 2;
+            if (playerShots[r][c] === 2) {
+                drawHitMarker(cx, cy, now);
+            } else if (playerShots[r][c] === 1) {
+                drawMissMarker(cx, cy);
+            }
+        }
+    }
+
+    // Hover crosshair
+    if (phase === PHASE_PLAYING && playerTurn && hoverCell && playerShots[hoverCell.row][hoverCell.col] === 0) {
+        var hx = gx + hoverCell.col * CELL;
+        var hy = gy + hoverCell.row * CELL;
+        var hcx = hx + CELL / 2;
+        var hcy = hy + CELL / 2;
+
+        // Highlight cell
+        ctx.fillStyle = "rgba(0, 255, 200, 0.15)";
+        ctx.fillRect(hx, hy, CELL, CELL);
+
+        // Crosshair
+        ctx.strokeStyle = "rgba(0, 255, 200, 0.6)";
+        ctx.lineWidth = 1.5;
+
+        // Horizontal line
+        ctx.beginPath();
+        ctx.moveTo(hcx - CELL * 0.4, hcy);
+        ctx.lineTo(hcx - CELL * 0.12, hcy);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(hcx + CELL * 0.12, hcy);
+        ctx.lineTo(hcx + CELL * 0.4, hcy);
+        ctx.stroke();
+
+        // Vertical line
+        ctx.beginPath();
+        ctx.moveTo(hcx, hcy - CELL * 0.4);
+        ctx.lineTo(hcx, hcy - CELL * 0.12);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(hcx, hcy + CELL * 0.12);
+        ctx.lineTo(hcx, hcy + CELL * 0.4);
+        ctx.stroke();
+
+        // Circle
+        ctx.beginPath();
+        ctx.arc(hcx, hcy, CELL * 0.32, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // Animated rotating ring
+        var rotAngle = now * 0.002;
+        ctx.strokeStyle = "rgba(0, 255, 200, 0.3)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(hcx, hcy, CELL * 0.42, rotAngle, rotAngle + Math.PI * 0.5);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(hcx, hcy, CELL * 0.42, rotAngle + Math.PI, rotAngle + Math.PI * 1.5);
+        ctx.stroke();
+    }
+
+    // Grid title
+    var titleFS = Math.max(8, Math.floor(CELL * 0.38));
+    ctx.font = "bold " + titleFS + "px " + FONT;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.fillStyle = RED;
+    ctx.fillText("ENEMY WATERS", gx + GRID_SIZE * CELL / 2, gy + GRID_SIZE * CELL + 4);
+}
+
+function drawHUD(now) {
+    // HUD background
+    ctx.fillStyle = "#0d0d22";
+    ctx.fillRect(0, 0, canvasW, HUD_H);
+    ctx.strokeStyle = "rgba(0, 255, 200, 0.1)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, HUD_H - 0.5);
+    ctx.lineTo(canvasW, HUD_H - 0.5);
+    ctx.stroke();
+
+    var fontSize = Math.max(8, Math.floor(CELL * 0.4));
+    ctx.font = "bold " + fontSize + "px " + FONT;
+    ctx.textBaseline = "middle";
+    var midY = HUD_H / 2;
+
+    // Title
+    ctx.textAlign = "left";
+    ctx.fillStyle = CYAN;
+    ctx.shadowColor = CYAN;
+    ctx.shadowBlur = 8;
+    ctx.fillText("BATTLESHIP", 10, midY);
+    ctx.shadowBlur = 0;
+
+    // Phase / message
+    ctx.textAlign = "center";
+    var msgFontSize = Math.max(7, Math.floor(CELL * 0.34));
+    ctx.font = "bold " + msgFontSize + "px " + FONT;
+
+    if (phase === PHASE_PLACING) {
+        var shipName = placingIndex < SHIPS.length ? SHIPS[placingIndex].name + " (" + SHIPS[placingIndex].len + ")" : "";
+        ctx.fillStyle = YELLOW;
+        ctx.fillText("PLACE: " + shipName + "  [R] rotate", canvasW / 2, midY);
+    } else if (turnMessage && (now - turnMessageTime) < 2000) {
+        var msgAlpha = 1;
+        if (now - turnMessageTime > 1500) {
+            msgAlpha = 1 - (now - turnMessageTime - 1500) / 500;
+        }
+        ctx.globalAlpha = msgAlpha;
+        if (turnMessage.indexOf("HIT") >= 0 || turnMessage.indexOf("SUNK") >= 0) {
+            ctx.fillStyle = turnMessage.indexOf("AI") >= 0 ? RED : YELLOW;
+        } else {
+            ctx.fillStyle = "rgba(150,150,170,0.8)";
+        }
+        ctx.fillText(turnMessage, canvasW / 2, midY);
+        ctx.globalAlpha = 1;
+    } else if (phase === PHASE_PLAYING) {
+        ctx.fillStyle = "rgba(0, 255, 200, 0.5)";
+        ctx.fillText("YOUR TURN", canvasW / 2, midY);
+    } else if (phase === PHASE_AI_TURN) {
+        var dots = "";
+        var dotCount = Math.floor((now / 400) % 4);
+        for (var d = 0; d < dotCount; d++) dots += ".";
+        ctx.fillStyle = "rgba(168, 85, 247, 0.7)";
+        ctx.fillText("AI THINKING" + dots, canvasW / 2, midY);
+    }
+
+    // Stats (right side)
+    ctx.textAlign = "right";
+    var statFS = Math.max(7, Math.floor(CELL * 0.3));
+    ctx.font = statFS + "px " + FONT;
+    ctx.fillStyle = "rgba(0, 255, 200, 0.4)";
+    ctx.fillText("W:" + stats.wins + " L:" + stats.losses, canvasW - 10, midY);
+}
+
+function drawTitleScreen(now) {
+    ctx.fillStyle = BG;
+    ctx.fillRect(0, 0, canvasW, canvasH);
+
+    var centerX = canvasW / 2;
+    var centerY = canvasH / 2;
+
+    // Decorative grid lines
+    ctx.strokeStyle = "rgba(0, 255, 200, 0.03)";
+    ctx.lineWidth = 1;
+    for (var i = 0; i < canvasW; i += CELL) {
+        ctx.beginPath();
+        ctx.moveTo(i, 0);
+        ctx.lineTo(i, canvasH);
+        ctx.stroke();
+    }
+    for (var j = 0; j < canvasH; j += CELL) {
+        ctx.beginPath();
+        ctx.moveTo(0, j);
+        ctx.lineTo(canvasW, j);
+        ctx.stroke();
+    }
+
+    // Animated radar sweep
+    var sweepAngle = now * 0.001;
+    ctx.save();
+    ctx.translate(centerX, centerY);
+    ctx.rotate(sweepAngle);
+    var sweepGrad = ctx.createLinearGradient(0, 0, 100, 0);
+    sweepGrad.addColorStop(0, "rgba(0, 255, 200, 0.1)");
+    sweepGrad.addColorStop(1, "rgba(0, 255, 200, 0)");
+    ctx.fillStyle = sweepGrad;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.arc(0, 0, 120, 0, 0.5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+
+    // Radar circles
+    for (var rc = 1; rc <= 3; rc++) {
+        ctx.strokeStyle = "rgba(0, 255, 200, " + (0.06 - rc * 0.015) + ")";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, rc * 40, 0, Math.PI * 2);
+        ctx.stroke();
+    }
+
+    // Title
+    var titleSize = Math.max(16, Math.floor(CELL * 1.4));
+    ctx.font = "bold " + titleSize + "px " + FONT;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+
+    var grad = ctx.createLinearGradient(centerX - 160, centerY - 50, centerX + 160, centerY - 50);
+    grad.addColorStop(0, CYAN);
+    grad.addColorStop(0.5, "#66ffdd");
+    grad.addColorStop(1, PURPLE);
+    ctx.fillStyle = grad;
+    ctx.shadowColor = CYAN;
+    ctx.shadowBlur = 30;
+    ctx.fillText("BATTLESHIP", centerX, centerY - 50);
+    ctx.shadowBlur = 0;
+
+    // Subtitle
+    var subSize = Math.max(8, Math.floor(CELL * 0.35));
+    ctx.font = subSize + "px " + FONT;
+    ctx.fillStyle = "rgba(168, 85, 247, 0.7)";
+    ctx.fillText("mahowald.io", centerX, centerY - 15);
+
+    // Ship roster
+    var rosterSize = Math.max(7, Math.floor(CELL * 0.28));
+    ctx.font = rosterSize + "px " + FONT;
+    ctx.fillStyle = "rgba(0, 255, 200, 0.3)";
+    var rosterY = centerY + 20;
+    for (var si = 0; si < SHIPS.length; si++) {
+        var dots = "";
+        for (var di = 0; di < SHIPS[si].len; di++) dots += "\u25A0 ";
+        ctx.fillText(SHIPS[si].name + "  " + dots, centerX, rosterY + si * (rosterSize + 4));
+    }
+
+    // Click to play
+    var pulse = 0.5 + 0.5 * Math.sin(now / 600);
+    ctx.globalAlpha = 0.4 + pulse * 0.5;
+    var clickSize = Math.max(8, Math.floor(CELL * 0.32));
+    ctx.font = clickSize + "px " + FONT;
+    ctx.fillStyle = CYAN;
+    ctx.fillText("click to play", centerX, centerY + 105);
+    ctx.globalAlpha = 1;
+
+    // Stats
+    if (stats.wins > 0 || stats.losses > 0) {
+        var statSize = Math.max(7, Math.floor(CELL * 0.26));
+        ctx.font = statSize + "px " + FONT;
+        ctx.fillStyle = "rgba(0, 255, 200, 0.3)";
+        ctx.fillText("wins: " + stats.wins + "  losses: " + stats.losses, centerX, centerY + 130);
+    }
+}
+
+function drawGameOverScreen(now) {
+    var t = Math.min(1, (now - gameOverTime) / 800);
+    var ease = 1 - Math.pow(1 - t, 3);
+
+    ctx.globalAlpha = ease * 0.8;
+    ctx.fillStyle = "rgba(10, 10, 26, 0.85)";
+    ctx.fillRect(0, 0, canvasW, canvasH);
+    ctx.globalAlpha = ease;
+
+    var centerX = canvasW / 2;
+    var centerY = canvasH / 2;
+
+    var titleSize = Math.max(14, Math.floor(CELL * 1.0));
+    ctx.font = "bold " + titleSize + "px " + FONT;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+
+    if (winner === "player") {
+        ctx.shadowColor = CYAN;
+        ctx.shadowBlur = 20;
+        ctx.fillStyle = CYAN;
+        ctx.fillText("VICTORY!", centerX, centerY - 30);
+        ctx.shadowBlur = 0;
+
+        var subSize = Math.max(8, Math.floor(CELL * 0.36));
+        ctx.font = subSize + "px " + FONT;
+        ctx.fillStyle = YELLOW;
+        ctx.fillText("Enemy fleet destroyed", centerX, centerY + 10);
+    } else {
+        ctx.shadowColor = RED;
+        ctx.shadowBlur = 20;
+        ctx.fillStyle = RED;
+        ctx.fillText("DEFEAT", centerX, centerY - 30);
+        ctx.shadowBlur = 0;
+
+        var subSize2 = Math.max(8, Math.floor(CELL * 0.36));
+        ctx.font = subSize2 + "px " + FONT;
+        ctx.fillStyle = "rgba(255, 107, 107, 0.7)";
+        ctx.fillText("Your fleet was sunk", centerX, centerY + 10);
+    }
+
+    // Stats
+    var statSize = Math.max(7, Math.floor(CELL * 0.28));
+    ctx.font = statSize + "px " + FONT;
+    ctx.fillStyle = "rgba(0, 255, 200, 0.4)";
+    ctx.fillText("wins: " + stats.wins + "  losses: " + stats.losses, centerX, centerY + 40);
+
+    // Click to continue
+    var pulse = 0.5 + 0.5 * Math.sin(now / 600);
+    ctx.globalAlpha = (0.4 + pulse * 0.5) * ease;
+    var clickSize = Math.max(7, Math.floor(CELL * 0.28));
+    ctx.font = clickSize + "px " + FONT;
+    ctx.fillStyle = CYAN;
+    ctx.fillText("click to continue", centerX, centerY + 70);
+    ctx.globalAlpha = 1;
+}
+
+// --- Ship status display ---
+function drawShipStatus(ships, x, y, label) {
+    var fs = Math.max(6, Math.floor(CELL * 0.24));
+    ctx.font = fs + "px " + FONT;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.fillStyle = "rgba(0, 255, 200, 0.3)";
+
+    // We don't draw status on canvas bottom due to space, it's in HUD area
+    // Actually let's skip this for cleanliness since HUD shows messages
+}
+
+// --- Main loop ---
+var lastFrame = 0;
+
+function frame(now) {
+    var dt = Math.min((now - lastFrame) / 1000, 0.05);
+    lastFrame = now;
+    waterTime = now;
+
+    ctx.clearRect(0, 0, canvasW, canvasH);
+
+    if (phase === PHASE_TITLE) {
+        drawTitleScreen(now);
+    } else if (phase === PHASE_GAME_OVER) {
+        // Draw the grids underneath
+        ctx.fillStyle = BG;
+        ctx.fillRect(0, 0, canvasW, canvasH);
+        drawHUD(now);
+        drawPlayerGrid(now);
+        drawAIGrid(now);
+        drawGameOverScreen(now);
+    } else {
+        ctx.fillStyle = BG;
+        ctx.fillRect(0, 0, canvasW, canvasH);
+        drawHUD(now);
+        drawPlayerGrid(now);
+        drawAIGrid(now);
+
+        // AI turn logic
+        if (phase === PHASE_AI_TURN && now >= aiThinkTimer) {
+            aiShoot();
+            if (phase !== PHASE_GAME_OVER) {
+                playerTurn = true;
+                phase = PHASE_PLAYING;
+            }
+        }
+    }
+
+    updateParticles(dt);
+    drawParticles();
+
+    requestAnimationFrame(frame);
+}
+
+requestAnimationFrame(frame);
+
+})();
+</script>
+</body>
+</html>
