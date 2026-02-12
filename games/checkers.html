@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>CHECKERS - mahowald.io</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: #0a0a1a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: "SF Mono", "Fira Code", "Courier New", monospace;
+    -webkit-user-select: none;
+    user-select: none;
+}
+canvas {
+    display: block;
+    border-radius: 4px;
+    box-shadow:
+        0 0 40px rgba(0, 255, 200, 0.08),
+        0 0 80px rgba(0, 255, 200, 0.04),
+        0 0 120px rgba(0, 255, 200, 0.02),
+        0 4px 30px rgba(0, 0, 0, 0.6);
+}
+.back-link {
+    position: fixed; top: 16px; left: 16px;
+    color: #00ffc8; text-decoration: none;
+    font-family: "SF Mono", "Fira Code", "Courier New", monospace;
+    font-size: 14px; z-index: 100; opacity: 0.7; transition: opacity 0.2s;
+}
+.back-link:hover { opacity: 1; }
+</style>
+</head>
+<body>
+<a href="/" class="back-link">&larr; BACK</a>
+<canvas id="c"></canvas>
+<script>
+(function() {
+    "use strict";
+
+    var CYAN   = "#00ffc8";
+    var PURPLE = "#a855f7";
+    var YELLOW = "#ffd93d";
+    var RED    = "#ff6b6b";
+    var BG     = "#0a0a1a";
+    var FONT   = '"SF Mono", "Fira Code", "Courier New", monospace';
+
+    var canvas = document.getElementById("c");
+    var ctx = canvas.getContext("2d");
+    var dpr = window.devicePixelRatio || 1;
+    var W = 500, H = 560;
+
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    canvas.style.width = W + "px";
+    canvas.style.height = H + "px";
+    ctx.scale(dpr, dpr);
+
+    var CELL = 56;
+    var BOARD_X = (W - 8 * CELL) / 2;
+    var BOARD_Y = 60;
+    var EMPTY = 0, PLAYER = 1, PLAYER_K = 2, AI_PIECE = 3, AI_K = 4;
+
+    var board = [];
+    var phase = "START";
+    var selected = null;
+    var validMoves = [];
+    var animating = false;
+    var animPiece = null;
+    var animFrom = null;
+    var animTo = null;
+    var animT = 0;
+    var particles = [];
+    var playerCount = 12;
+    var aiCount = 12;
+    var message = "";
+    var messageTimer = 0;
+    var wins = 0, losses = 0;
+
+    try {
+        wins = parseInt(localStorage.getItem("checkers_w")) || 0;
+        losses = parseInt(localStorage.getItem("checkers_l")) || 0;
+    } catch(e) {}
+
+    function initBoard() {
+        board = [];
+        for (var r = 0; r < 8; r++) {
+            board[r] = [];
+            for (var c = 0; c < 8; c++) {
+                board[r][c] = EMPTY;
+                if ((r + c) % 2 === 1) {
+                    if (r < 3) board[r][c] = AI_PIECE;
+                    else if (r > 4) board[r][c] = PLAYER;
+                }
+            }
+        }
+        playerCount = 12;
+        aiCount = 12;
+        selected = null;
+        validMoves = [];
+    }
+
+    function isPlayer(p) { return p === PLAYER || p === PLAYER_K; }
+    function isAI(p) { return p === AI_PIECE || p === AI_K; }
+    function isKing(p) { return p === PLAYER_K || p === AI_K; }
+    function owner(p) { return isPlayer(p) ? "player" : isAI(p) ? "ai" : "none"; }
+
+    function getMovesFor(b, r, c) {
+        var piece = b[r][c];
+        if (piece === EMPTY) return [];
+        var moves = [];
+        var dirs = [];
+        if (piece === PLAYER || piece === PLAYER_K) dirs.push(-1);
+        if (piece === AI_PIECE || piece === AI_K) dirs.push(1);
+        if (isKing(piece)) { dirs = [-1, 1]; }
+
+        for (var d = 0; d < dirs.length; d++) {
+            var dr = dirs[d];
+            for (var dc = -1; dc <= 1; dc += 2) {
+                var nr = r + dr, nc = c + dc;
+                if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
+                    if (b[nr][nc] === EMPTY) {
+                        moves.push({ to: [nr, nc], captures: [] });
+                    }
+                }
+            }
+        }
+        return moves;
+    }
+
+    function getJumpsFor(b, r, c, piece) {
+        if (piece === undefined) piece = b[r][c];
+        if (piece === EMPTY) return [];
+        var jumps = [];
+        var dirs = [];
+        if (piece === PLAYER || piece === PLAYER_K) dirs.push(-1);
+        if (piece === AI_PIECE || piece === AI_K) dirs.push(1);
+        if (isKing(piece)) { dirs = [-1, 1]; }
+        var ownr = owner(piece);
+
+        for (var d = 0; d < dirs.length; d++) {
+            var dr = dirs[d];
+            for (var dc = -1; dc <= 1; dc += 2) {
+                var mr = r + dr, mc = c + dc;
+                var jr = r + dr * 2, jc = c + dc * 2;
+                if (jr >= 0 && jr < 8 && jc >= 0 && jc < 8) {
+                    var mid = b[mr][mc];
+                    if (mid !== EMPTY && owner(mid) !== ownr && b[jr][jc] === EMPTY) {
+                        jumps.push({ to: [jr, jc], captures: [[mr, mc]] });
+                    }
+                }
+            }
+        }
+        return jumps;
+    }
+
+    function getMultiJumps(b, r, c, piece) {
+        var singleJumps = getJumpsFor(b, r, c, piece);
+        if (singleJumps.length === 0) return [];
+        var allJumps = [];
+        for (var i = 0; i < singleJumps.length; i++) {
+            var j = singleJumps[i];
+            var nb = copyBoard(b);
+            nb[r][c] = EMPTY;
+            nb[j.captures[0][0]][j.captures[0][1]] = EMPTY;
+            nb[j.to[0]][j.to[1]] = piece;
+            var promoted = piece;
+            if (isPlayer(piece) && j.to[0] === 0) promoted = PLAYER_K;
+            if (isAI(piece) && j.to[0] === 7) promoted = AI_K;
+            nb[j.to[0]][j.to[1]] = promoted;
+
+            var further = getMultiJumps(nb, j.to[0], j.to[1], promoted);
+            if (further.length === 0) {
+                allJumps.push({ to: j.to, captures: j.captures.slice() });
+            } else {
+                for (var k = 0; k < further.length; k++) {
+                    allJumps.push({
+                        to: further[k].to,
+                        captures: j.captures.concat(further[k].captures)
+                    });
+                }
+            }
+        }
+        return allJumps;
+    }
+
+    function getAllMoves(b, side) {
+        var jumps = [];
+        var moves = [];
+        for (var r = 0; r < 8; r++) {
+            for (var c = 0; c < 8; c++) {
+                var p = b[r][c];
+                if ((side === "player" && isPlayer(p)) || (side === "ai" && isAI(p))) {
+                    var pj = getMultiJumps(b, r, c, p);
+                    for (var i = 0; i < pj.length; i++) {
+                        jumps.push({ from: [r, c], to: pj[i].to, captures: pj[i].captures });
+                    }
+                    if (jumps.length === 0) {
+                        var pm = getMovesFor(b, r, c);
+                        for (var i = 0; i < pm.length; i++) {
+                            moves.push({ from: [r, c], to: pm[i].to, captures: [] });
+                        }
+                    }
+                }
+            }
+        }
+        return jumps.length > 0 ? jumps : moves;
+    }
+
+    function copyBoard(b) {
+        var nb = [];
+        for (var r = 0; r < 8; r++) {
+            nb[r] = b[r].slice();
+        }
+        return nb;
+    }
+
+    function applyMove(b, move) {
+        var nb = copyBoard(b);
+        var piece = nb[move.from[0]][move.from[1]];
+        nb[move.from[0]][move.from[1]] = EMPTY;
+        for (var i = 0; i < move.captures.length; i++) {
+            nb[move.captures[i][0]][move.captures[i][1]] = EMPTY;
+        }
+        if (isPlayer(piece) && move.to[0] === 0) piece = PLAYER_K;
+        if (isAI(piece) && move.to[0] === 7) piece = AI_K;
+        nb[move.to[0]][move.to[1]] = piece;
+        return nb;
+    }
+
+    function evaluate(b) {
+        var score = 0;
+        for (var r = 0; r < 8; r++) {
+            for (var c = 0; c < 8; c++) {
+                var p = b[r][c];
+                if (p === PLAYER) score += 10 + (7 - r);
+                else if (p === PLAYER_K) score += 15;
+                else if (p === AI_PIECE) score -= 10 - r;
+                else if (p === AI_K) score -= 15;
+            }
+        }
+        return score;
+    }
+
+    function minimax(b, depth, alpha, beta, maximizing) {
+        var side = maximizing ? "player" : "ai";
+        var moves = getAllMoves(b, side);
+
+        if (depth === 0 || moves.length === 0) {
+            return { score: evaluate(b), move: null };
+        }
+
+        var bestMove = moves[0];
+        if (maximizing) {
+            var best = -Infinity;
+            for (var i = 0; i < moves.length; i++) {
+                var nb = applyMove(b, moves[i]);
+                var val = minimax(nb, depth - 1, alpha, beta, false).score;
+                if (val > best) {
+                    best = val;
+                    bestMove = moves[i];
+                }
+                alpha = Math.max(alpha, best);
+                if (beta <= alpha) break;
+            }
+            return { score: best, move: bestMove };
+        } else {
+            var best = Infinity;
+            for (var i = 0; i < moves.length; i++) {
+                var nb = applyMove(b, moves[i]);
+                var val = minimax(nb, depth - 1, alpha, beta, true).score;
+                if (val < best) {
+                    best = val;
+                    bestMove = moves[i];
+                }
+                beta = Math.min(beta, best);
+                if (beta <= alpha) break;
+            }
+            return { score: best, move: bestMove };
+        }
+    }
+
+    function countPieces() {
+        playerCount = 0;
+        aiCount = 0;
+        for (var r = 0; r < 8; r++) {
+            for (var c = 0; c < 8; c++) {
+                if (isPlayer(board[r][c])) playerCount++;
+                if (isAI(board[r][c])) aiCount++;
+            }
+        }
+    }
+
+    function doAIMove() {
+        if (phase !== "AI_TURN") return;
+        var result = minimax(board, 5, -Infinity, Infinity, false);
+        if (!result.move) {
+            phase = "GAME_OVER";
+            message = "YOU WIN!";
+            wins++;
+            try { localStorage.setItem("checkers_w", wins); } catch(e) {}
+            spawnParticles(W / 2, H / 2, CYAN, 50);
+            return;
+        }
+        executeMove(result.move, function() {
+            countPieces();
+            if (playerCount === 0) {
+                phase = "GAME_OVER";
+                message = "AI WINS";
+                losses++;
+                try { localStorage.setItem("checkers_l", losses); } catch(e) {}
+            } else {
+                var playerMoves = getAllMoves(board, "player");
+                if (playerMoves.length === 0) {
+                    phase = "GAME_OVER";
+                    message = "AI WINS - NO MOVES";
+                    losses++;
+                    try { localStorage.setItem("checkers_l", losses); } catch(e) {}
+                } else {
+                    phase = "PLAYER_TURN";
+                }
+            }
+        });
+    }
+
+    function executeMove(move, callback) {
+        board = applyMove(board, move);
+        for (var i = 0; i < move.captures.length; i++) {
+            var cap = move.captures[i];
+            var cx = BOARD_X + cap[1] * CELL + CELL / 2;
+            var cy = BOARD_Y + cap[0] * CELL + CELL / 2;
+            spawnParticles(cx, cy, RED, 15);
+        }
+        animating = true;
+        animFrom = { r: move.from[0], c: move.from[1] };
+        animTo = { r: move.to[0], c: move.to[1] };
+        animPiece = board[move.to[0]][move.to[1]];
+        animT = 0;
+        var dur = 0.25;
+        var startTime = performance.now();
+        function anim() {
+            var elapsed = (performance.now() - startTime) / 1000;
+            animT = Math.min(elapsed / dur, 1);
+            if (animT >= 1) {
+                animating = false;
+                animPiece = null;
+                if (callback) callback();
+                return;
+            }
+            requestAnimationFrame(anim);
+        }
+        requestAnimationFrame(anim);
+    }
+
+    function getMovesForSelected() {
+        if (!selected) return [];
+        var all = getAllMoves(board, "player");
+        var moves = [];
+        for (var i = 0; i < all.length; i++) {
+            if (all[i].from[0] === selected[0] && all[i].from[1] === selected[1]) {
+                moves.push(all[i]);
+            }
+        }
+        return moves;
+    }
+
+    function spawnParticles(x, y, color, count) {
+        for (var i = 0; i < count; i++) {
+            var angle = Math.random() * Math.PI * 2;
+            var speed = Math.random() * 4 + 1;
+            particles.push({
+                x: x, y: y,
+                vx: Math.cos(angle) * speed,
+                vy: Math.sin(angle) * speed,
+                life: 1,
+                decay: Math.random() * 0.02 + 0.01,
+                r: Math.random() * 3 + 1,
+                color: color
+            });
+        }
+    }
+
+    canvas.addEventListener("click", function(e) {
+        var rect = canvas.getBoundingClientRect();
+        var mx = (e.clientX - rect.left) * (W / rect.width);
+        var my = (e.clientY - rect.top) * (H / rect.height);
+
+        if (phase === "START" || phase === "GAME_OVER") {
+            initBoard();
+            phase = "PLAYER_TURN";
+            return;
+        }
+
+        if (phase !== "PLAYER_TURN" || animating) return;
+
+        var col = Math.floor((mx - BOARD_X) / CELL);
+        var row = Math.floor((my - BOARD_Y) / CELL);
+        if (row < 0 || row > 7 || col < 0 || col > 7) return;
+
+        if (selected) {
+            for (var i = 0; i < validMoves.length; i++) {
+                var m = validMoves[i];
+                if (m.to[0] === row && m.to[1] === col) {
+                    phase = "ANIMATING";
+                    executeMove(m, function() {
+                        countPieces();
+                        if (aiCount === 0) {
+                            phase = "GAME_OVER";
+                            message = "YOU WIN!";
+                            wins++;
+                            try { localStorage.setItem("checkers_w", wins); } catch(e) {}
+                            spawnParticles(W / 2, H / 2, CYAN, 50);
+                        } else {
+                            var aiMoves = getAllMoves(board, "ai");
+                            if (aiMoves.length === 0) {
+                                phase = "GAME_OVER";
+                                message = "YOU WIN!";
+                                wins++;
+                                try { localStorage.setItem("checkers_w", wins); } catch(e) {}
+                                spawnParticles(W / 2, H / 2, CYAN, 50);
+                            } else {
+                                phase = "AI_TURN";
+                                setTimeout(doAIMove, 400);
+                            }
+                        }
+                    });
+                    selected = null;
+                    validMoves = [];
+                    return;
+                }
+            }
+        }
+
+        if (isPlayer(board[row][col])) {
+            selected = [row, col];
+            validMoves = getMovesForSelected();
+        } else {
+            selected = null;
+            validMoves = [];
+        }
+    });
+
+    var lastTime = 0;
+
+    function frame(now) {
+        requestAnimationFrame(frame);
+        var dt = Math.min((now - lastTime) / 1000, 0.1);
+        lastTime = now;
+
+        for (var i = particles.length - 1; i >= 0; i--) {
+            var p = particles[i];
+            p.x += p.vx;
+            p.y += p.vy;
+            p.vy += 0.05;
+            p.life -= p.decay;
+            if (p.life <= 0) particles.splice(i, 1);
+        }
+
+        // Render
+        ctx.fillStyle = BG;
+        ctx.fillRect(0, 0, W, H);
+
+        // Title
+        ctx.font = "bold 22px " + FONT;
+        ctx.fillStyle = CYAN;
+        ctx.textAlign = "center";
+        ctx.shadowColor = CYAN;
+        ctx.shadowBlur = 10;
+        ctx.fillText("CHECKERS", W / 2, 35);
+        ctx.shadowBlur = 0;
+
+        // Stats
+        ctx.font = "10px " + FONT;
+        ctx.fillStyle = "rgba(255,255,255,0.3)";
+        ctx.fillText("W: " + wins + "  L: " + losses, W / 2, 50);
+
+        if (phase === "START") {
+            ctx.font = "14px " + FONT;
+            ctx.fillStyle = "rgba(255,255,255,0.5)";
+            ctx.fillText("CLICK TO START", W / 2, H / 2);
+            ctx.font = "10px " + FONT;
+            ctx.fillStyle = "rgba(255,255,255,0.2)";
+            ctx.fillText("YOU ARE CYAN, AI IS PURPLE", W / 2, H / 2 + 25);
+            drawParticles();
+            return;
+        }
+
+        // Board
+        for (var r = 0; r < 8; r++) {
+            for (var c = 0; c < 8; c++) {
+                var x = BOARD_X + c * CELL;
+                var y = BOARD_Y + r * CELL;
+                if ((r + c) % 2 === 0) {
+                    ctx.fillStyle = "rgba(255,255,255,0.03)";
+                } else {
+                    ctx.fillStyle = "rgba(255,255,255,0.06)";
+                }
+                ctx.fillRect(x, y, CELL, CELL);
+
+                // Highlight selected
+                if (selected && selected[0] === r && selected[1] === c) {
+                    ctx.fillStyle = "rgba(0,255,200,0.15)";
+                    ctx.fillRect(x, y, CELL, CELL);
+                }
+            }
+        }
+
+        // Valid move highlights
+        for (var i = 0; i < validMoves.length; i++) {
+            var m = validMoves[i];
+            var x = BOARD_X + m.to[1] * CELL + CELL / 2;
+            var y = BOARD_Y + m.to[0] * CELL + CELL / 2;
+            ctx.fillStyle = "rgba(255,217,61,0.3)";
+            ctx.beginPath();
+            ctx.arc(x, y, 8, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // Board border
+        ctx.strokeStyle = "rgba(255,255,255,0.1)";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(BOARD_X, BOARD_Y, 8 * CELL, 8 * CELL);
+
+        // Grid lines
+        ctx.strokeStyle = "rgba(255,255,255,0.03)";
+        for (var i = 1; i < 8; i++) {
+            ctx.beginPath();
+            ctx.moveTo(BOARD_X + i * CELL, BOARD_Y);
+            ctx.lineTo(BOARD_X + i * CELL, BOARD_Y + 8 * CELL);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(BOARD_X, BOARD_Y + i * CELL);
+            ctx.lineTo(BOARD_X + 8 * CELL, BOARD_Y + i * CELL);
+            ctx.stroke();
+        }
+
+        // Pieces
+        for (var r = 0; r < 8; r++) {
+            for (var c = 0; c < 8; c++) {
+                var piece = board[r][c];
+                if (piece === EMPTY) continue;
+                if (animating && animTo && r === animTo.r && c === animTo.c) continue;
+
+                var x = BOARD_X + c * CELL + CELL / 2;
+                var y = BOARD_Y + r * CELL + CELL / 2;
+                drawPiece(x, y, piece);
+            }
+        }
+
+        // Animated piece
+        if (animating && animPiece) {
+            var fx = BOARD_X + animFrom.c * CELL + CELL / 2;
+            var fy = BOARD_Y + animFrom.r * CELL + CELL / 2;
+            var tx = BOARD_X + animTo.c * CELL + CELL / 2;
+            var ty = BOARD_Y + animTo.r * CELL + CELL / 2;
+            var ease = animT * animT * (3 - 2 * animT);
+            var ax = fx + (tx - fx) * ease;
+            var ay = fy + (ty - fy) * ease;
+            drawPiece(ax, ay, animPiece);
+        }
+
+        // Piece counts
+        ctx.font = "11px " + FONT;
+        ctx.textAlign = "left";
+        ctx.fillStyle = CYAN;
+        ctx.fillText("YOU: " + playerCount, BOARD_X, H - 16);
+        ctx.textAlign = "right";
+        ctx.fillStyle = PURPLE;
+        ctx.fillText("AI: " + aiCount, BOARD_X + 8 * CELL, H - 16);
+
+        // Turn indicator
+        ctx.textAlign = "center";
+        ctx.font = "11px " + FONT;
+        if (phase === "PLAYER_TURN") {
+            ctx.fillStyle = CYAN;
+            ctx.fillText("YOUR TURN", W / 2, H - 16);
+        } else if (phase === "AI_TURN" || phase === "ANIMATING") {
+            ctx.fillStyle = PURPLE;
+            ctx.fillText("AI THINKING...", W / 2, H - 16);
+        }
+
+        // Game over
+        if (phase === "GAME_OVER") {
+            ctx.fillStyle = "rgba(10,10,26,0.7)";
+            ctx.fillRect(0, 0, W, H);
+            ctx.font = "bold 28px " + FONT;
+            ctx.fillStyle = message.indexOf("YOU") >= 0 ? CYAN : RED;
+            ctx.textAlign = "center";
+            ctx.shadowColor = ctx.fillStyle;
+            ctx.shadowBlur = 15;
+            ctx.fillText(message, W / 2, H / 2 - 10);
+            ctx.shadowBlur = 0;
+            ctx.font = "12px " + FONT;
+            ctx.fillStyle = "rgba(255,255,255,0.4)";
+            ctx.fillText("CLICK TO PLAY AGAIN", W / 2, H / 2 + 25);
+        }
+
+        drawParticles();
+    }
+
+    function drawPiece(x, y, piece) {
+        var color = isPlayer(piece) ? CYAN : PURPLE;
+        ctx.save();
+        ctx.fillStyle = color;
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 10;
+        ctx.beginPath();
+        ctx.arc(x, y, CELL / 2 - 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+
+        // Inner ring
+        ctx.strokeStyle = BG;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(x, y, CELL / 2 - 12, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // King crown
+        if (isKing(piece)) {
+            ctx.fillStyle = YELLOW;
+            ctx.shadowColor = YELLOW;
+            ctx.shadowBlur = 6;
+            ctx.font = "bold 16px " + FONT;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText("\u2605", x, y + 1);
+            ctx.shadowBlur = 0;
+        }
+        ctx.restore();
+    }
+
+    function drawParticles() {
+        for (var i = 0; i < particles.length; i++) {
+            var p = particles[i];
+            ctx.save();
+            ctx.globalAlpha = p.life;
+            ctx.fillStyle = p.color;
+            ctx.shadowColor = p.color;
+            ctx.shadowBlur = 6;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+    }
+
+    requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

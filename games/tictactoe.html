@@ -1,0 +1,982 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>TIC-TAC-TOE - mahowald.io</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: #0a0a1a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: "SF Mono", "Fira Code", "Courier New", monospace;
+    -webkit-user-select: none;
+    user-select: none;
+}
+canvas {
+    display: block;
+    border-radius: 4px;
+    box-shadow:
+        0 0 40px rgba(0, 255, 200, 0.08),
+        0 0 80px rgba(0, 255, 200, 0.04),
+        0 0 120px rgba(0, 255, 200, 0.02),
+        0 4px 30px rgba(0, 0, 0, 0.6);
+}
+.back-link {
+    position: fixed;
+    top: 16px;
+    left: 16px;
+    color: #00ffc8;
+    text-decoration: none;
+    font-family: "SF Mono", "Fira Code", "Courier New", monospace;
+    font-size: 14px;
+    z-index: 100;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+}
+.back-link:hover { opacity: 1; }
+</style>
+</head>
+<body>
+<a href="/" class="back-link">&larr; BACK</a>
+<canvas id="c"></canvas>
+<script>
+(function() {
+    "use strict";
+
+    // ── Constants ──────────────────────────────────────────────
+    var CYAN   = "#00ffc8";
+    var PURPLE = "#a855f7";
+    var YELLOW = "#ffd93d";
+    var DANGER = "#ff6b6b";
+    var BG     = "#0a0a1a";
+    var WHITE  = "#ffffff";
+    var FONT   = '"SF Mono", "Fira Code", "Courier New", monospace';
+
+    var PLAYER_MARK = 1; // X
+    var AI_MARK     = 2; // O
+
+    var WIN_COMBOS = [
+        [0,1,2],[3,4,5],[6,7,8], // rows
+        [0,3,6],[1,4,7],[2,5,8], // cols
+        [0,4,8],[2,4,6]          // diags
+    ];
+
+    // ── Canvas Setup ──────────────────────────────────────────
+    var canvas = document.getElementById("c");
+    var ctx    = canvas.getContext("2d");
+    var W, H, dpr;
+    var CELL, GRID_X, GRID_Y, GRID_SIZE;
+    var LINE_W = 3;
+
+    function resize() {
+        dpr = window.devicePixelRatio || 1;
+        var size = Math.min(window.innerWidth - 32, window.innerHeight - 32, 540);
+        W = Math.round(size);
+        H = Math.round(size);
+        canvas.width  = W * dpr;
+        canvas.height = H * dpr;
+        canvas.style.width  = W + "px";
+        canvas.style.height = H + "px";
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+        GRID_SIZE = Math.round(W * 0.65);
+        CELL = Math.round(GRID_SIZE / 3);
+        GRID_X = Math.round((W - GRID_SIZE) / 2);
+        GRID_Y = Math.round((H - GRID_SIZE) / 2) + 20;
+    }
+    window.addEventListener("resize", resize);
+    resize();
+
+    // ── Game State ────────────────────────────────────────────
+    var Phase = { START: 0, PLAYING: 1, GAME_OVER: 2 };
+    var phase = Phase.START;
+
+    var Difficulty = { EASY: 0, MEDIUM: 1, HARD: 2 };
+    var difficulty = Difficulty.HARD;
+    var diffNames = ["EASY", "MEDIUM", "HARD"];
+
+    var board = [0,0,0,0,0,0,0,0,0]; // 0=empty, 1=X(player), 2=O(AI)
+    var currentTurn = PLAYER_MARK;
+    var winCombo = null;
+    var winner = 0; // 0=none/draw, 1=player, 2=AI
+
+    // Animation state for marks
+    var markAnims = []; // { cell, mark, progress (0..1), startTime }
+    var MARK_ANIM_DUR = 280; // ms
+
+    // Winning line glow
+    var winLineGlow = 0;
+    var winLineDir  = 1;
+
+    // Grid line animation
+    var gridAlpha = 0;
+    var gridPulse = 0;
+
+    // Game over timer
+    var gameOverTimer = 0;
+    var GAME_OVER_DELAY = 800;
+
+    // AI thinking delay
+    var aiThinking   = false;
+    var aiThinkStart = 0;
+    var AI_THINK_DELAY = 400;
+
+    // Particles
+    var particles = [];
+
+    // Score from localStorage
+    var stats = { wins: 0, losses: 0, draws: 0 };
+    loadStats();
+
+    // Hover state
+    var hoverCell = -1;
+
+    // Start screen button rects (computed in draw)
+    var diffButtons = [];
+    var playButton = { x: 0, y: 0, w: 0, h: 0 };
+    var playAgainButton = { x: 0, y: 0, w: 0, h: 0 };
+
+    // Timestamp
+    var lastTime = 0;
+    var elapsed  = 0;
+
+    // ── Storage ───────────────────────────────────────────────
+    function loadStats() {
+        try {
+            var data = localStorage.getItem("tictactoe_stats");
+            if (data) {
+                var parsed = JSON.parse(data);
+                stats.wins   = parsed.wins   || 0;
+                stats.losses = parsed.losses || 0;
+                stats.draws  = parsed.draws  || 0;
+            }
+        } catch(e) { /* ignore */ }
+    }
+
+    function saveStats() {
+        try {
+            localStorage.setItem("tictactoe_stats", JSON.stringify(stats));
+        } catch(e) { /* ignore */ }
+    }
+
+    // ── Board Logic ───────────────────────────────────────────
+    function resetBoard() {
+        board = [0,0,0,0,0,0,0,0,0];
+        markAnims = [];
+        winCombo = null;
+        winner = 0;
+        currentTurn = PLAYER_MARK;
+        aiThinking = false;
+        gameOverTimer = 0;
+        winLineGlow = 0;
+        winLineDir = 1;
+        particles = [];
+    }
+
+    function checkWin(b) {
+        for (var i = 0; i < WIN_COMBOS.length; i++) {
+            var c = WIN_COMBOS[i];
+            if (b[c[0]] !== 0 && b[c[0]] === b[c[1]] && b[c[1]] === b[c[2]]) {
+                return { winner: b[c[0]], combo: c };
+            }
+        }
+        return null;
+    }
+
+    function isBoardFull(b) {
+        for (var i = 0; i < 9; i++) {
+            if (b[i] === 0) return false;
+        }
+        return true;
+    }
+
+    function getEmptyCells(b) {
+        var cells = [];
+        for (var i = 0; i < 9; i++) {
+            if (b[i] === 0) cells.push(i);
+        }
+        return cells;
+    }
+
+    // ── Minimax AI ────────────────────────────────────────────
+    function minimax(b, depth, isMaximizing, alpha, beta) {
+        var result = checkWin(b);
+        if (result) {
+            return result.winner === AI_MARK ? 10 - depth : depth - 10;
+        }
+        if (isBoardFull(b)) return 0;
+
+        if (isMaximizing) {
+            var best = -Infinity;
+            var empty = getEmptyCells(b);
+            for (var i = 0; i < empty.length; i++) {
+                b[empty[i]] = AI_MARK;
+                var score = minimax(b, depth + 1, false, alpha, beta);
+                b[empty[i]] = 0;
+                best = Math.max(best, score);
+                alpha = Math.max(alpha, score);
+                if (beta <= alpha) break;
+            }
+            return best;
+        } else {
+            var best = Infinity;
+            var empty = getEmptyCells(b);
+            for (var i = 0; i < empty.length; i++) {
+                b[empty[i]] = PLAYER_MARK;
+                var score = minimax(b, depth + 1, true, alpha, beta);
+                b[empty[i]] = 0;
+                best = Math.min(best, score);
+                beta = Math.min(beta, score);
+                if (beta <= alpha) break;
+            }
+            return best;
+        }
+    }
+
+    function getBestMove(b) {
+        var bestScore = -Infinity;
+        var bestMove  = -1;
+        var empty = getEmptyCells(b);
+        for (var i = 0; i < empty.length; i++) {
+            b[empty[i]] = AI_MARK;
+            var score = minimax(b, 0, false, -Infinity, Infinity);
+            b[empty[i]] = 0;
+            if (score > bestScore) {
+                bestScore = score;
+                bestMove  = empty[i];
+            }
+        }
+        return bestMove;
+    }
+
+    function getRandomMove(b) {
+        var empty = getEmptyCells(b);
+        return empty[Math.floor(Math.random() * empty.length)];
+    }
+
+    function getAIMove(b) {
+        if (difficulty === Difficulty.EASY) {
+            return getRandomMove(b);
+        } else if (difficulty === Difficulty.MEDIUM) {
+            // 50% optimal, 50% random
+            if (Math.random() < 0.5) {
+                return getBestMove(b);
+            } else {
+                return getRandomMove(b);
+            }
+        } else {
+            return getBestMove(b);
+        }
+    }
+
+    // ── Place Mark ────────────────────────────────────────────
+    function placeMark(cell, mark) {
+        board[cell] = mark;
+        markAnims.push({
+            cell: cell,
+            mark: mark,
+            startTime: performance.now(),
+            progress: 0
+        });
+
+        // Check for win
+        var result = checkWin(board);
+        if (result) {
+            winCombo = result.combo;
+            winner = result.winner;
+            gameOverTimer = performance.now();
+            if (winner === PLAYER_MARK) {
+                stats.wins++;
+                spawnWinParticles();
+            } else {
+                stats.losses++;
+            }
+            saveStats();
+            return;
+        }
+
+        // Check for draw
+        if (isBoardFull(board)) {
+            winner = 0;
+            winCombo = null;
+            gameOverTimer = performance.now();
+            stats.draws++;
+            saveStats();
+            return;
+        }
+
+        // Switch turns
+        currentTurn = mark === PLAYER_MARK ? AI_MARK : PLAYER_MARK;
+
+        // Trigger AI
+        if (currentTurn === AI_MARK) {
+            aiThinking = true;
+            aiThinkStart = performance.now();
+        }
+    }
+
+    // ── Particles ─────────────────────────────────────────────
+    function spawnWinParticles() {
+        for (var i = 0; i < 60; i++) {
+            var angle = Math.random() * Math.PI * 2;
+            var speed = 1 + Math.random() * 4;
+            particles.push({
+                x: W / 2,
+                y: H / 2,
+                vx: Math.cos(angle) * speed,
+                vy: Math.sin(angle) * speed,
+                life: 1.0,
+                decay: 0.005 + Math.random() * 0.015,
+                size: 2 + Math.random() * 4,
+                color: Math.random() < 0.5 ? CYAN : YELLOW
+            });
+        }
+    }
+
+    function updateParticles(dt) {
+        for (var i = particles.length - 1; i >= 0; i--) {
+            var p = particles[i];
+            p.x += p.vx;
+            p.y += p.vy;
+            p.vy += 0.03; // gravity
+            p.life -= p.decay;
+            if (p.life <= 0) {
+                particles.splice(i, 1);
+            }
+        }
+    }
+
+    function drawParticles() {
+        for (var i = 0; i < particles.length; i++) {
+            var p = particles[i];
+            ctx.save();
+            ctx.globalAlpha = p.life;
+            ctx.fillStyle = p.color;
+            ctx.shadowColor = p.color;
+            ctx.shadowBlur = 8;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+    }
+
+    // ── Cell Coordinate Helpers ───────────────────────────────
+    function cellToXY(cell) {
+        var col = cell % 3;
+        var row = Math.floor(cell / 3);
+        var cx = GRID_X + col * CELL + CELL / 2;
+        var cy = GRID_Y + row * CELL + CELL / 2;
+        return { x: cx, y: cy };
+    }
+
+    function xyToCell(mx, my) {
+        var col = Math.floor((mx - GRID_X) / CELL);
+        var row = Math.floor((my - GRID_Y) / CELL);
+        if (col < 0 || col > 2 || row < 0 || row > 2) return -1;
+        return row * 3 + col;
+    }
+
+    // ── Drawing Helpers ───────────────────────────────────────
+    function drawGrid() {
+        gridPulse += 0.02;
+        var alpha = 0.4 + Math.sin(gridPulse) * 0.05;
+
+        ctx.save();
+        ctx.strokeStyle = CYAN;
+        ctx.lineWidth = LINE_W;
+        ctx.globalAlpha = alpha;
+        ctx.shadowColor = CYAN;
+        ctx.shadowBlur = 12;
+        ctx.lineCap = "round";
+
+        // Vertical lines
+        for (var i = 1; i < 3; i++) {
+            var x = GRID_X + i * CELL;
+            ctx.beginPath();
+            ctx.moveTo(x, GRID_Y + 6);
+            ctx.lineTo(x, GRID_Y + GRID_SIZE - 6);
+            ctx.stroke();
+        }
+
+        // Horizontal lines
+        for (var i = 1; i < 3; i++) {
+            var y = GRID_Y + i * CELL;
+            ctx.beginPath();
+            ctx.moveTo(GRID_X + 6, y);
+            ctx.lineTo(GRID_X + GRID_SIZE - 6, y);
+            ctx.stroke();
+        }
+
+        ctx.restore();
+    }
+
+    function drawX(cx, cy, size, progress, color, glowIntensity) {
+        var half = size / 2;
+        ctx.save();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = LINE_W + 1;
+        ctx.lineCap = "round";
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 8 + glowIntensity;
+
+        // First stroke of X (top-left to bottom-right)
+        var p1 = Math.min(progress * 2, 1.0);
+        if (p1 > 0) {
+            var x1 = cx - half;
+            var y1 = cy - half;
+            var x2 = cx - half + (half * 2) * p1;
+            var y2 = cy - half + (half * 2) * p1;
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.stroke();
+        }
+
+        // Second stroke of X (top-right to bottom-left)
+        var p2 = Math.max((progress - 0.5) * 2, 0);
+        if (p2 > 0) {
+            var x1 = cx + half;
+            var y1 = cy - half;
+            var x2 = cx + half - (half * 2) * p2;
+            var y2 = cy - half + (half * 2) * p2;
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.stroke();
+        }
+
+        ctx.restore();
+    }
+
+    function drawO(cx, cy, radius, progress, color, glowIntensity) {
+        ctx.save();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = LINE_W + 1;
+        ctx.lineCap = "round";
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 8 + glowIntensity;
+
+        var endAngle = -Math.PI / 2 + Math.PI * 2 * progress;
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius, -Math.PI / 2, endAngle);
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    function drawMarks(now) {
+        var markSize = CELL * 0.3;
+        var oRadius  = CELL * 0.3;
+
+        for (var i = 0; i < markAnims.length; i++) {
+            var anim = markAnims[i];
+            var elapsed = now - anim.startTime;
+            anim.progress = Math.min(elapsed / MARK_ANIM_DUR, 1.0);
+            // Ease out
+            var t = 1 - Math.pow(1 - anim.progress, 3);
+
+            var pos = cellToXY(anim.cell);
+            var glow = 0;
+
+            // Extra glow if part of winning combo
+            if (winCombo && winCombo.indexOf(anim.cell) !== -1) {
+                glow = 10 + winLineGlow * 10;
+            }
+
+            if (anim.mark === PLAYER_MARK) {
+                drawX(pos.x, pos.y, markSize, t, CYAN, glow);
+            } else {
+                drawO(pos.x, pos.y, oRadius, t, PURPLE, glow);
+            }
+        }
+    }
+
+    function drawWinLine(now) {
+        if (!winCombo) return;
+
+        winLineGlow += winLineDir * 0.03;
+        if (winLineGlow > 1) { winLineGlow = 1; winLineDir = -1; }
+        if (winLineGlow < 0) { winLineGlow = 0; winLineDir = 1; }
+
+        var p0 = cellToXY(winCombo[0]);
+        var p2 = cellToXY(winCombo[2]);
+
+        var color = winner === PLAYER_MARK ? CYAN : PURPLE;
+
+        ctx.save();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 4;
+        ctx.lineCap = "round";
+        ctx.globalAlpha = 0.6 + winLineGlow * 0.4;
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 15 + winLineGlow * 20;
+
+        ctx.beginPath();
+        ctx.moveTo(p0.x, p0.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    function drawHover() {
+        if (phase !== Phase.PLAYING) return;
+        if (currentTurn !== PLAYER_MARK) return;
+        if (hoverCell < 0 || board[hoverCell] !== 0) return;
+
+        var pos = cellToXY(hoverCell);
+
+        ctx.save();
+        ctx.fillStyle = CYAN;
+        ctx.globalAlpha = 0.08;
+        ctx.fillRect(
+            GRID_X + (hoverCell % 3) * CELL + 2,
+            GRID_Y + Math.floor(hoverCell / 3) * CELL + 2,
+            CELL - 4,
+            CELL - 4
+        );
+        ctx.restore();
+
+        // Ghost X
+        var markSize = CELL * 0.3;
+        ctx.save();
+        ctx.globalAlpha = 0.2;
+        drawX(pos.x, pos.y, markSize, 1, CYAN, 0);
+        ctx.restore();
+    }
+
+    // ── Scoreboard ────────────────────────────────────────────
+    function drawScoreboard() {
+        ctx.save();
+        ctx.font = "12px " + FONT;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "top";
+
+        var y = GRID_Y - 36;
+        var spacing = 90;
+        var cx = W / 2;
+
+        // Wins
+        ctx.fillStyle = CYAN;
+        ctx.globalAlpha = 0.7;
+        ctx.fillText("W:" + stats.wins, cx - spacing, y);
+
+        // Draws
+        ctx.fillStyle = YELLOW;
+        ctx.fillText("D:" + stats.draws, cx, y);
+
+        // Losses
+        ctx.fillStyle = DANGER;
+        ctx.fillText("L:" + stats.losses, cx + spacing, y);
+
+        ctx.restore();
+    }
+
+    function drawTurnIndicator() {
+        if (phase !== Phase.PLAYING) return;
+
+        ctx.save();
+        ctx.font = "13px " + FONT;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "top";
+
+        var y = GRID_Y + GRID_SIZE + 18;
+        if (currentTurn === PLAYER_MARK) {
+            ctx.fillStyle = CYAN;
+            ctx.globalAlpha = 0.8;
+            ctx.fillText("YOUR TURN (X)", W / 2, y);
+        } else {
+            ctx.fillStyle = PURPLE;
+            ctx.globalAlpha = 0.8;
+            ctx.fillText("AI THINKING...", W / 2, y);
+        }
+
+        ctx.restore();
+    }
+
+    // ── Start Screen ──────────────────────────────────────────
+    function drawStartScreen() {
+        ctx.save();
+
+        // Title
+        ctx.font = "bold 28px " + FONT;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = CYAN;
+        ctx.shadowColor = CYAN;
+        ctx.shadowBlur = 20;
+        ctx.fillText("TIC-TAC-TOE", W / 2, H * 0.18);
+
+        ctx.shadowBlur = 0;
+
+        // Subtitle
+        ctx.font = "13px " + FONT;
+        ctx.fillStyle = WHITE;
+        ctx.globalAlpha = 0.4;
+        ctx.fillText("player vs AI", W / 2, H * 0.26);
+        ctx.globalAlpha = 1;
+
+        // Difficulty label
+        ctx.font = "12px " + FONT;
+        ctx.fillStyle = WHITE;
+        ctx.globalAlpha = 0.6;
+        ctx.fillText("DIFFICULTY", W / 2, H * 0.38);
+        ctx.globalAlpha = 1;
+
+        // Difficulty buttons
+        diffButtons = [];
+        var btnW = 100;
+        var btnH = 34;
+        var btnGap = 14;
+        var totalW = btnW * 3 + btnGap * 2;
+        var startX = (W - totalW) / 2;
+        var btnY = H * 0.43;
+
+        var colors = [CYAN, YELLOW, DANGER];
+
+        for (var i = 0; i < 3; i++) {
+            var bx = startX + i * (btnW + btnGap);
+            diffButtons.push({ x: bx, y: btnY, w: btnW, h: btnH });
+
+            var selected = difficulty === i;
+
+            ctx.save();
+            if (selected) {
+                ctx.fillStyle = colors[i];
+                ctx.globalAlpha = 0.15;
+                ctx.fillRect(bx, btnY, btnW, btnH);
+
+                ctx.strokeStyle = colors[i];
+                ctx.lineWidth = 2;
+                ctx.globalAlpha = 0.9;
+                ctx.shadowColor = colors[i];
+                ctx.shadowBlur = 10;
+                ctx.strokeRect(bx, btnY, btnW, btnH);
+            } else {
+                ctx.strokeStyle = colors[i];
+                ctx.lineWidth = 1;
+                ctx.globalAlpha = 0.35;
+                ctx.strokeRect(bx, btnY, btnW, btnH);
+            }
+            ctx.restore();
+
+            ctx.save();
+            ctx.font = "12px " + FONT;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillStyle = colors[i];
+            ctx.globalAlpha = selected ? 1 : 0.5;
+            ctx.fillText(diffNames[i], bx + btnW / 2, btnY + btnH / 2);
+            ctx.restore();
+        }
+
+        // Stats display
+        ctx.font = "11px " + FONT;
+        ctx.textAlign = "center";
+        ctx.globalAlpha = 0.4;
+        ctx.fillStyle = WHITE;
+        ctx.fillText("W:" + stats.wins + "  D:" + stats.draws + "  L:" + stats.losses, W / 2, H * 0.57);
+        ctx.globalAlpha = 1;
+
+        // Play button
+        var pbW = 180;
+        var pbH = 44;
+        var pbX = (W - pbW) / 2;
+        var pbY = H * 0.65;
+        playButton = { x: pbX, y: pbY, w: pbW, h: pbH };
+
+        var pulse = 0.7 + Math.sin(performance.now() * 0.003) * 0.3;
+
+        ctx.save();
+        ctx.fillStyle = CYAN;
+        ctx.globalAlpha = 0.08 * pulse;
+        ctx.fillRect(pbX, pbY, pbW, pbH);
+
+        ctx.strokeStyle = CYAN;
+        ctx.lineWidth = 2;
+        ctx.globalAlpha = 0.8 * pulse;
+        ctx.shadowColor = CYAN;
+        ctx.shadowBlur = 15;
+        ctx.strokeRect(pbX, pbY, pbW, pbH);
+        ctx.restore();
+
+        ctx.save();
+        ctx.font = "bold 16px " + FONT;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = CYAN;
+        ctx.shadowColor = CYAN;
+        ctx.shadowBlur = 10;
+        ctx.fillText("PLAY", W / 2, pbY + pbH / 2);
+        ctx.restore();
+
+        // Decorative mini grid
+        drawMiniGrid(W / 2, H * 0.84, 50);
+
+        ctx.restore();
+    }
+
+    function drawMiniGrid(cx, cy, size) {
+        var half = size / 2;
+        ctx.save();
+        ctx.strokeStyle = CYAN;
+        ctx.lineWidth = 1;
+        ctx.globalAlpha = 0.15;
+        var third = size / 3;
+
+        for (var i = 1; i < 3; i++) {
+            ctx.beginPath();
+            ctx.moveTo(cx - half + i * third, cy - half);
+            ctx.lineTo(cx - half + i * third, cy + half);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.moveTo(cx - half, cy - half + i * third);
+            ctx.lineTo(cx + half, cy - half + i * third);
+            ctx.stroke();
+        }
+        ctx.restore();
+    }
+
+    // ── Game Over Screen ──────────────────────────────────────
+    function drawGameOver(now) {
+        // Draw the board state behind
+        drawGrid();
+        drawMarks(now);
+        drawWinLine(now);
+        drawScoreboard();
+        drawParticles();
+
+        // Overlay
+        ctx.save();
+        ctx.fillStyle = BG;
+        ctx.globalAlpha = 0.55;
+        ctx.fillRect(0, 0, W, H);
+        ctx.restore();
+
+        // Result text
+        ctx.save();
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+
+        var label, color;
+        if (winner === PLAYER_MARK) {
+            label = "YOU WIN!";
+            color = CYAN;
+        } else if (winner === AI_MARK) {
+            label = "AI WINS";
+            color = DANGER;
+        } else {
+            label = "DRAW";
+            color = YELLOW;
+        }
+
+        ctx.font = "bold 32px " + FONT;
+        ctx.fillStyle = color;
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 25;
+        ctx.fillText(label, W / 2, H * 0.38);
+        ctx.shadowBlur = 0;
+
+        // Sub text
+        ctx.font = "13px " + FONT;
+        ctx.fillStyle = WHITE;
+        ctx.globalAlpha = 0.5;
+        var diffLabel = diffNames[difficulty] + " MODE";
+        ctx.fillText(diffLabel, W / 2, H * 0.45);
+        ctx.globalAlpha = 1;
+
+        // Play Again button
+        var pbW = 200;
+        var pbH = 44;
+        var pbX = (W - pbW) / 2;
+        var pbY = H * 0.55;
+        playAgainButton = { x: pbX, y: pbY, w: pbW, h: pbH };
+
+        var pulse = 0.7 + Math.sin(now * 0.003) * 0.3;
+
+        ctx.fillStyle = CYAN;
+        ctx.globalAlpha = 0.08 * pulse;
+        ctx.fillRect(pbX, pbY, pbW, pbH);
+
+        ctx.strokeStyle = CYAN;
+        ctx.lineWidth = 2;
+        ctx.globalAlpha = 0.8 * pulse;
+        ctx.shadowColor = CYAN;
+        ctx.shadowBlur = 15;
+        ctx.strokeRect(pbX, pbY, pbW, pbH);
+        ctx.shadowBlur = 0;
+
+        ctx.font = "bold 14px " + FONT;
+        ctx.fillStyle = CYAN;
+        ctx.globalAlpha = 1;
+        ctx.shadowColor = CYAN;
+        ctx.shadowBlur = 10;
+        ctx.fillText("PLAY AGAIN", W / 2, pbY + pbH / 2);
+        ctx.restore();
+
+        // Score
+        ctx.save();
+        ctx.font = "11px " + FONT;
+        ctx.textAlign = "center";
+        ctx.globalAlpha = 0.4;
+        ctx.fillStyle = WHITE;
+        ctx.fillText("W:" + stats.wins + "  D:" + stats.draws + "  L:" + stats.losses, W / 2, H * 0.68);
+        ctx.restore();
+    }
+
+    // ── Input Handling ────────────────────────────────────────
+    function getInputPos(e) {
+        var rect = canvas.getBoundingClientRect();
+        var x, y;
+        if (e.touches) {
+            x = e.touches[0].clientX - rect.left;
+            y = e.touches[0].clientY - rect.top;
+        } else {
+            x = e.clientX - rect.left;
+            y = e.clientY - rect.top;
+        }
+        return { x: x, y: y };
+    }
+
+    function hitTest(pos, btn) {
+        return pos.x >= btn.x && pos.x <= btn.x + btn.w &&
+               pos.y >= btn.y && pos.y <= btn.y + btn.h;
+    }
+
+    function handleClick(e) {
+        e.preventDefault();
+        var pos = getInputPos(e);
+
+        if (phase === Phase.START) {
+            // Check difficulty buttons
+            for (var i = 0; i < diffButtons.length; i++) {
+                if (hitTest(pos, diffButtons[i])) {
+                    difficulty = i;
+                    return;
+                }
+            }
+
+            // Check play button
+            if (hitTest(pos, playButton)) {
+                phase = Phase.PLAYING;
+                resetBoard();
+                return;
+            }
+        }
+
+        if (phase === Phase.PLAYING) {
+            if (currentTurn !== PLAYER_MARK) return;
+            if (aiThinking) return;
+
+            var cell = xyToCell(pos.x, pos.y);
+            if (cell >= 0 && board[cell] === 0) {
+                placeMark(cell, PLAYER_MARK);
+            }
+        }
+
+        if (phase === Phase.GAME_OVER) {
+            if (hitTest(pos, playAgainButton)) {
+                phase = Phase.PLAYING;
+                resetBoard();
+                return;
+            }
+        }
+    }
+
+    function handleMove(e) {
+        var pos = getInputPos(e);
+        hoverCell = xyToCell(pos.x, pos.y);
+        canvas.style.cursor = "default";
+
+        if (phase === Phase.START) {
+            for (var i = 0; i < diffButtons.length; i++) {
+                if (hitTest(pos, diffButtons[i])) {
+                    canvas.style.cursor = "pointer";
+                    return;
+                }
+            }
+            if (hitTest(pos, playButton)) {
+                canvas.style.cursor = "pointer";
+            }
+        }
+
+        if (phase === Phase.PLAYING && currentTurn === PLAYER_MARK && !aiThinking) {
+            if (hoverCell >= 0 && board[hoverCell] === 0) {
+                canvas.style.cursor = "pointer";
+            }
+        }
+
+        if (phase === Phase.GAME_OVER) {
+            if (hitTest(pos, playAgainButton)) {
+                canvas.style.cursor = "pointer";
+            }
+        }
+    }
+
+    canvas.addEventListener("mousedown", handleClick);
+    canvas.addEventListener("touchstart", handleClick, { passive: false });
+    canvas.addEventListener("mousemove", handleMove);
+
+    // ── Main Loop ─────────────────────────────────────────────
+    function update(now) {
+        var dt = now - lastTime;
+        lastTime = now;
+
+        // AI logic
+        if (phase === Phase.PLAYING && aiThinking && !winCombo && !isBoardFull(board)) {
+            if (now - aiThinkStart > AI_THINK_DELAY) {
+                var move = getAIMove(board);
+                if (move >= 0) {
+                    placeMark(move, AI_MARK);
+                }
+                aiThinking = false;
+            }
+        }
+
+        // Transition to game over
+        if (phase === Phase.PLAYING && gameOverTimer > 0) {
+            if (now - gameOverTimer > GAME_OVER_DELAY) {
+                phase = Phase.GAME_OVER;
+            }
+        }
+
+        updateParticles(dt);
+    }
+
+    function draw(now) {
+        ctx.clearRect(0, 0, W, H);
+        ctx.fillStyle = BG;
+        ctx.fillRect(0, 0, W, H);
+
+        if (phase === Phase.START) {
+            drawStartScreen();
+        } else if (phase === Phase.PLAYING) {
+            drawScoreboard();
+            drawGrid();
+            drawHover();
+            drawMarks(now);
+            drawWinLine(now);
+            drawTurnIndicator();
+            drawParticles();
+        } else if (phase === Phase.GAME_OVER) {
+            drawGameOver(now);
+        }
+    }
+
+    function loop(now) {
+        update(now);
+        draw(now);
+        requestAnimationFrame(loop);
+    }
+
+    requestAnimationFrame(loop);
+
+})();
+</script>
+</body>
+</html>

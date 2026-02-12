@@ -1,0 +1,841 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Tetris - mahowald.io</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: #0a0a1a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: "SF Mono", "Fira Code", "Courier New", monospace;
+    -webkit-user-select: none;
+    user-select: none;
+}
+canvas {
+    display: block;
+    border-radius: 4px;
+    box-shadow:
+        0 0 40px rgba(0, 255, 200, 0.08),
+        0 0 80px rgba(0, 255, 200, 0.04),
+        0 0 120px rgba(0, 255, 200, 0.02),
+        0 4px 30px rgba(0, 0, 0, 0.6);
+}
+.back-link {
+    position: fixed;
+    top: 16px;
+    left: 16px;
+    z-index: 1000;
+    color: #00ffc8;
+    text-decoration: none;
+    font-family: "SF Mono", "Fira Code", "Courier New", monospace;
+    font-size: 14px;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+}
+.back-link:hover {
+    opacity: 1;
+}
+</style>
+</head>
+<body>
+<a href="/" class="back-link">&larr; BACK</a>
+<canvas id="c"></canvas>
+<script>
+(function() {
+"use strict";
+
+// ── Constants ──────────────────────────────────────────────
+const COLS = 10;
+const ROWS = 20;
+const BLOCK = 30;
+const BG = "#0a0a1a";
+const CYAN = "#00ffc8";
+const PURPLE = "#a855f7";
+const RED = "#ff6b6b";
+const FONT = '"SF Mono", "Fira Code", "Courier New", monospace';
+const PARTICLE_COLORS = ["#ff6b6b", "#ffd93d", "#ff8c42", "#00ffc8"];
+
+const PIECE_COLORS = {
+    I: "#00ffc8",
+    O: "#ffd93d",
+    T: "#a855f7",
+    S: "#22c55e",
+    Z: "#ff6b6b",
+    J: "#3b82f6",
+    L: "#ff8c42"
+};
+
+const SHAPES = {
+    I: [[0,0],[1,0],[2,0],[3,0]],
+    O: [[0,0],[1,0],[0,1],[1,1]],
+    T: [[0,0],[1,0],[2,0],[1,1]],
+    S: [[1,0],[2,0],[0,1],[1,1]],
+    Z: [[0,0],[1,0],[1,1],[2,1]],
+    J: [[0,0],[0,1],[1,1],[2,1]],
+    L: [[2,0],[0,1],[1,1],[2,1]]
+};
+
+const PIECE_NAMES = ["I","O","T","S","Z","J","L"];
+
+const WALL_KICKS = [
+    [0, 0], [-1, 0], [1, 0], [0, -1], [-1, -1], [1, -1], [-2, 0], [2, 0]
+];
+
+const SCORE_TABLE = [0, 100, 300, 500, 800];
+
+// ── Canvas Setup ───────────────────────────────────────────
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+let dpr = window.devicePixelRatio || 1;
+
+// Layout constants
+const GRID_X_OFFSET = 20;
+const GRID_Y_OFFSET = 60;
+const HUD_WIDTH = 160;
+const CANVAS_W = GRID_X_OFFSET + COLS * BLOCK + 20 + HUD_WIDTH + 20;
+const CANVAS_H = GRID_Y_OFFSET + ROWS * BLOCK + 20;
+
+function resizeCanvas() {
+    dpr = window.devicePixelRatio || 1;
+    const maxW = window.innerWidth * 0.95;
+    const maxH = window.innerHeight * 0.95;
+    const scale = Math.min(maxW / CANVAS_W, maxH / CANVAS_H, 1.5);
+    const w = CANVAS_W * scale;
+    const h = CANVAS_H * scale;
+    canvas.style.width = w + "px";
+    canvas.style.height = h + "px";
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+}
+resizeCanvas();
+window.addEventListener("resize", resizeCanvas);
+
+// ── State ──────────────────────────────────────────────────
+let phase = "START"; // START, PLAYING, DEAD
+let grid = [];
+let current = null;
+let nextPiece = null;
+let score = 0;
+let lines = 0;
+let level = 1;
+let highScore = 0;
+try { highScore = parseInt(localStorage.getItem("tetris_high") || "0", 10); } catch(e) {}
+let dropTimer = 0;
+let dropInterval = 1000;
+let lastTime = 0;
+let particles = [];
+let demoBlocks = [];
+let flashRows = [];
+let flashTimer = 0;
+let inputCooldown = {};
+
+// ── Helpers ────────────────────────────────────────────────
+function rand(a, b) { return Math.floor(Math.random() * (b - a + 1)) + a; }
+function pick(arr) { return arr[rand(0, arr.length - 1)]; }
+
+function createGrid() {
+    grid = [];
+    for (let r = 0; r < ROWS; r++) {
+        grid[r] = [];
+        for (let c = 0; c < COLS; c++) {
+            grid[r][c] = null;
+        }
+    }
+}
+
+function randomPieceName() {
+    return pick(PIECE_NAMES);
+}
+
+function createPiece(name) {
+    const blocks = SHAPES[name].map(function(b) { return [b[0], b[1]]; });
+    const color = PIECE_COLORS[name];
+    // Center horizontally
+    const minX = Math.min.apply(null, blocks.map(function(b) { return b[0]; }));
+    const maxX = Math.max.apply(null, blocks.map(function(b) { return b[0]; }));
+    const w = maxX - minX + 1;
+    const offsetX = Math.floor((COLS - w) / 2) - minX;
+    for (let i = 0; i < blocks.length; i++) {
+        blocks[i][0] += offsetX;
+    }
+    return { name: name, blocks: blocks, color: color };
+}
+
+function rotatePiece(piece) {
+    // Rotate 90 degrees clockwise around centroid
+    var cx = 0, cy = 0;
+    for (var i = 0; i < piece.blocks.length; i++) {
+        cx += piece.blocks[i][0];
+        cy += piece.blocks[i][1];
+    }
+    cx /= piece.blocks.length;
+    cy /= piece.blocks.length;
+    var newBlocks = [];
+    for (var i = 0; i < piece.blocks.length; i++) {
+        var rx = piece.blocks[i][0] - cx;
+        var ry = piece.blocks[i][1] - cy;
+        newBlocks.push([Math.round(cx - ry + 0.01), Math.round(cy + rx + 0.01)]);
+    }
+    return { name: piece.name, blocks: newBlocks, color: piece.color };
+}
+
+function collides(blocks) {
+    for (var i = 0; i < blocks.length; i++) {
+        var x = blocks[i][0], y = blocks[i][1];
+        if (x < 0 || x >= COLS || y >= ROWS) return true;
+        if (y >= 0 && grid[y][x] !== null) return true;
+    }
+    return false;
+}
+
+function movePiece(dx, dy) {
+    var nb = current.blocks.map(function(b) { return [b[0] + dx, b[1] + dy]; });
+    if (!collides(nb)) {
+        current.blocks = nb;
+        return true;
+    }
+    return false;
+}
+
+function tryRotate() {
+    var rotated = rotatePiece(current);
+    for (var k = 0; k < WALL_KICKS.length; k++) {
+        var wk = WALL_KICKS[k];
+        var shifted = rotated.blocks.map(function(b) { return [b[0] + wk[0], b[1] + wk[1]]; });
+        if (!collides(shifted)) {
+            current.blocks = shifted;
+            return true;
+        }
+    }
+    return false;
+}
+
+function lockPiece() {
+    for (var i = 0; i < current.blocks.length; i++) {
+        var x = current.blocks[i][0], y = current.blocks[i][1];
+        if (y >= 0 && y < ROWS && x >= 0 && x < COLS) {
+            grid[y][x] = current.color;
+        }
+    }
+}
+
+function getGhostY() {
+    var dy = 0;
+    while (true) {
+        var nb = current.blocks.map(function(b) { return [b[0], b[1] + dy + 1]; });
+        if (collides(nb)) break;
+        dy++;
+    }
+    return dy;
+}
+
+function clearLines() {
+    var cleared = [];
+    for (var r = ROWS - 1; r >= 0; r--) {
+        var full = true;
+        for (var c = 0; c < COLS; c++) {
+            if (grid[r][c] === null) { full = false; break; }
+        }
+        if (full) cleared.push(r);
+    }
+    if (cleared.length > 0) {
+        flashRows = cleared.slice();
+        flashTimer = 0.3;
+        // Spawn particles for cleared rows
+        for (var i = 0; i < cleared.length; i++) {
+            var r = cleared[i];
+            for (var c = 0; c < COLS; c++) {
+                var px = GRID_X_OFFSET + c * BLOCK + BLOCK / 2;
+                var py = GRID_Y_OFFSET + r * BLOCK + BLOCK / 2;
+                for (var p = 0; p < 3; p++) {
+                    particles.push({
+                        x: px, y: py,
+                        vx: (Math.random() - 0.5) * 300,
+                        vy: (Math.random() - 0.5) * 300 - 100,
+                        life: 0.6 + Math.random() * 0.5,
+                        maxLife: 0.6 + Math.random() * 0.5,
+                        color: pick(PARTICLE_COLORS),
+                        size: 2 + Math.random() * 3
+                    });
+                }
+            }
+        }
+        // Remove cleared rows and add empty ones on top
+        // Sort descending so splice indices remain correct
+        cleared.sort(function(a, b) { return b - a; });
+        for (var i = 0; i < cleared.length; i++) {
+            grid.splice(cleared[i], 1);
+        }
+        for (var i = 0; i < cleared.length; i++) {
+            var row = [];
+            for (var c = 0; c < COLS; c++) row.push(null);
+            grid.unshift(row);
+        }
+
+        var n = cleared.length;
+        score += SCORE_TABLE[n] * level;
+        lines += n;
+        level = Math.floor(lines / 10) + 1;
+        dropInterval = Math.max(50, 1000 - (level - 1) * 80);
+        if (score > highScore) {
+            highScore = score;
+            try { localStorage.setItem("tetris_high", highScore.toString()); } catch(e) {}
+        }
+    }
+}
+
+function spawnPiece() {
+    if (nextPiece === null) {
+        nextPiece = createPiece(randomPieceName());
+    }
+    current = nextPiece;
+    nextPiece = createPiece(randomPieceName());
+    // Check game over
+    if (collides(current.blocks)) {
+        phase = "DEAD";
+    }
+    dropTimer = 0;
+}
+
+function hardDrop() {
+    var dy = getGhostY();
+    for (var i = 0; i < current.blocks.length; i++) {
+        current.blocks[i][1] += dy;
+    }
+    score += dy * 2;
+    lockPiece();
+    clearLines();
+    spawnPiece();
+}
+
+// ── Demo blocks for start screen ──────────────────────────
+function initDemoBlocks() {
+    demoBlocks = [];
+    for (var i = 0; i < 30; i++) {
+        spawnDemoBlock();
+    }
+}
+
+function spawnDemoBlock() {
+    var name = pick(PIECE_NAMES);
+    demoBlocks.push({
+        x: Math.random() * CANVAS_W,
+        y: -30 - Math.random() * CANVAS_H,
+        vy: 30 + Math.random() * 60,
+        size: 12 + Math.random() * 16,
+        color: PIECE_COLORS[name],
+        alpha: 0.15 + Math.random() * 0.2,
+        rotation: Math.random() * Math.PI * 2,
+        rotSpeed: (Math.random() - 0.5) * 1.5
+    });
+}
+
+// ── Drawing ────────────────────────────────────────────────
+function drawBlock(x, y, color, alpha, size) {
+    size = size || BLOCK;
+    alpha = alpha !== undefined ? alpha : 1;
+    ctx.globalAlpha = alpha;
+    // Filled block
+    ctx.fillStyle = color;
+    ctx.fillRect(x + 1, y + 1, size - 2, size - 2);
+    // Inner highlight
+    ctx.fillStyle = "rgba(255,255,255,0.15)";
+    ctx.fillRect(x + 2, y + 2, size - 4, (size - 4) * 0.35);
+    // Border glow
+    ctx.strokeStyle = color;
+    ctx.globalAlpha = alpha * 0.5;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x + 0.5, y + 0.5, size - 1, size - 1);
+    ctx.globalAlpha = 1;
+}
+
+function drawGrid() {
+    // Grid background
+    ctx.fillStyle = "rgba(0,0,0,0.5)";
+    ctx.fillRect(GRID_X_OFFSET, GRID_Y_OFFSET, COLS * BLOCK, ROWS * BLOCK);
+    // Grid lines
+    ctx.strokeStyle = "rgba(255,255,255,0.04)";
+    ctx.lineWidth = 0.5;
+    for (var r = 0; r <= ROWS; r++) {
+        ctx.beginPath();
+        ctx.moveTo(GRID_X_OFFSET, GRID_Y_OFFSET + r * BLOCK);
+        ctx.lineTo(GRID_X_OFFSET + COLS * BLOCK, GRID_Y_OFFSET + r * BLOCK);
+        ctx.stroke();
+    }
+    for (var c = 0; c <= COLS; c++) {
+        ctx.beginPath();
+        ctx.moveTo(GRID_X_OFFSET + c * BLOCK, GRID_Y_OFFSET);
+        ctx.lineTo(GRID_X_OFFSET + c * BLOCK, GRID_Y_OFFSET + ROWS * BLOCK);
+        ctx.stroke();
+    }
+    // Grid border
+    ctx.strokeStyle = "rgba(0,255,200,0.15)";
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(GRID_X_OFFSET - 0.5, GRID_Y_OFFSET - 0.5, COLS * BLOCK + 1, ROWS * BLOCK + 1);
+
+    // Placed blocks
+    for (var r = 0; r < ROWS; r++) {
+        for (var c = 0; c < COLS; c++) {
+            if (grid[r][c] !== null) {
+                var isFlash = flashRows.indexOf(r) !== -1;
+                if (isFlash) {
+                    drawBlock(GRID_X_OFFSET + c * BLOCK, GRID_Y_OFFSET + r * BLOCK, "#fff", 0.5 + 0.5 * Math.sin(flashTimer * 20));
+                } else {
+                    drawBlock(GRID_X_OFFSET + c * BLOCK, GRID_Y_OFFSET + r * BLOCK, grid[r][c]);
+                }
+            }
+        }
+    }
+}
+
+function drawGhost() {
+    if (!current) return;
+    var dy = getGhostY();
+    ctx.globalAlpha = 0.2;
+    for (var i = 0; i < current.blocks.length; i++) {
+        var bx = current.blocks[i][0];
+        var by = current.blocks[i][1] + dy;
+        if (by >= 0) {
+            ctx.fillStyle = current.color;
+            ctx.fillRect(GRID_X_OFFSET + bx * BLOCK + 1, GRID_Y_OFFSET + by * BLOCK + 1, BLOCK - 2, BLOCK - 2);
+            ctx.strokeStyle = current.color;
+            ctx.lineWidth = 1;
+            ctx.strokeRect(GRID_X_OFFSET + bx * BLOCK + 0.5, GRID_Y_OFFSET + by * BLOCK + 0.5, BLOCK - 1, BLOCK - 1);
+        }
+    }
+    ctx.globalAlpha = 1;
+}
+
+function drawCurrentPiece() {
+    if (!current) return;
+    for (var i = 0; i < current.blocks.length; i++) {
+        var bx = current.blocks[i][0];
+        var by = current.blocks[i][1];
+        if (by >= 0) {
+            drawBlock(GRID_X_OFFSET + bx * BLOCK, GRID_Y_OFFSET + by * BLOCK, current.color);
+        }
+    }
+}
+
+function drawHUD() {
+    var hx = GRID_X_OFFSET + COLS * BLOCK + 20;
+    var hy = GRID_Y_OFFSET;
+
+    // Score
+    ctx.fillStyle = "rgba(255,255,255,0.4)";
+    ctx.font = "10px " + FONT;
+    ctx.textAlign = "left";
+    ctx.fillText("SCORE", hx, hy + 10);
+    ctx.fillStyle = CYAN;
+    ctx.font = "bold 18px " + FONT;
+    ctx.fillText(score.toString(), hx, hy + 32);
+
+    // Level
+    ctx.fillStyle = "rgba(255,255,255,0.4)";
+    ctx.font = "10px " + FONT;
+    ctx.fillText("LEVEL", hx, hy + 62);
+    ctx.fillStyle = PURPLE;
+    ctx.font = "bold 18px " + FONT;
+    ctx.fillText(level.toString(), hx, hy + 84);
+
+    // Lines
+    ctx.fillStyle = "rgba(255,255,255,0.4)";
+    ctx.font = "10px " + FONT;
+    ctx.fillText("LINES", hx, hy + 114);
+    ctx.fillStyle = "#ffd93d";
+    ctx.font = "bold 18px " + FONT;
+    ctx.fillText(lines.toString(), hx, hy + 136);
+
+    // High Score
+    ctx.fillStyle = "rgba(255,255,255,0.4)";
+    ctx.font = "10px " + FONT;
+    ctx.fillText("HIGH SCORE", hx, hy + 166);
+    ctx.fillStyle = RED;
+    ctx.font = "bold 18px " + FONT;
+    ctx.fillText(highScore.toString(), hx, hy + 188);
+
+    // Next piece
+    ctx.fillStyle = "rgba(255,255,255,0.4)";
+    ctx.font = "10px " + FONT;
+    ctx.fillText("NEXT", hx, hy + 228);
+
+    if (nextPiece) {
+        var previewSize = 18;
+        var baseBlocks = SHAPES[nextPiece.name];
+        var minBX = Infinity, maxBX = -Infinity, minBY = Infinity, maxBY = -Infinity;
+        for (var i = 0; i < baseBlocks.length; i++) {
+            if (baseBlocks[i][0] < minBX) minBX = baseBlocks[i][0];
+            if (baseBlocks[i][0] > maxBX) maxBX = baseBlocks[i][0];
+            if (baseBlocks[i][1] < minBY) minBY = baseBlocks[i][1];
+            if (baseBlocks[i][1] > maxBY) maxBY = baseBlocks[i][1];
+        }
+        var pw = (maxBX - minBX + 1) * previewSize;
+        var ph = (maxBY - minBY + 1) * previewSize;
+        var pxOff = hx + (HUD_WIDTH - 40 - pw) / 2;
+        var pyOff = hy + 240;
+        // Background for preview
+        ctx.fillStyle = "rgba(0,0,0,0.3)";
+        ctx.fillRect(hx, pyOff - 5, HUD_WIDTH - 40, ph + 10);
+        ctx.strokeStyle = "rgba(255,255,255,0.06)";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(hx, pyOff - 5, HUD_WIDTH - 40, ph + 10);
+
+        for (var i = 0; i < baseBlocks.length; i++) {
+            var bx = baseBlocks[i][0] - minBX;
+            var by = baseBlocks[i][1] - minBY;
+            drawBlock(pxOff + bx * previewSize, pyOff + by * previewSize, nextPiece.color, 1, previewSize);
+        }
+    }
+}
+
+function drawParticles() {
+    for (var i = 0; i < particles.length; i++) {
+        var p = particles[i];
+        var alpha = p.life / p.maxLife;
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size * alpha, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+}
+
+// ── Start Screen ───────────────────────────────────────────
+function drawStartScreen(time) {
+    // Demo blocks
+    for (var i = 0; i < demoBlocks.length; i++) {
+        var b = demoBlocks[i];
+        ctx.save();
+        ctx.translate(b.x, b.y);
+        ctx.rotate(b.rotation);
+        ctx.globalAlpha = b.alpha;
+        ctx.fillStyle = b.color;
+        ctx.fillRect(-b.size / 2, -b.size / 2, b.size, b.size);
+        ctx.strokeStyle = b.color;
+        ctx.globalAlpha = b.alpha * 0.5;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(-b.size / 2 - 1, -b.size / 2 - 1, b.size + 2, b.size + 2);
+        ctx.restore();
+    }
+    ctx.globalAlpha = 1;
+
+    var cx = CANVAS_W / 2;
+    var cy = CANVAS_H / 2 - 30;
+
+    // Title
+    ctx.textAlign = "center";
+    ctx.font = "bold 56px " + FONT;
+    var grad = ctx.createLinearGradient(cx - 120, cy, cx + 120, cy);
+    grad.addColorStop(0, CYAN);
+    grad.addColorStop(1, PURPLE);
+    ctx.fillStyle = grad;
+    ctx.fillText("TETRIS", cx, cy);
+
+    // Glow
+    ctx.shadowColor = CYAN;
+    ctx.shadowBlur = 30;
+    ctx.fillText("TETRIS", cx, cy);
+    ctx.shadowBlur = 0;
+
+    // Subtitle
+    ctx.font = "12px " + FONT;
+    ctx.fillStyle = "rgba(255,255,255,0.3)";
+    ctx.fillText("mahowald.io", cx, cy + 30);
+
+    // Prompt
+    var blink = Math.sin(time * 3) * 0.3 + 0.7;
+    ctx.globalAlpha = blink;
+    ctx.font = "14px " + FONT;
+    ctx.fillStyle = CYAN;
+    ctx.fillText("tap or click to play", cx, cy + 80);
+    ctx.globalAlpha = 1;
+
+    // Controls hint
+    ctx.font = "10px " + FONT;
+    ctx.fillStyle = "rgba(255,255,255,0.2)";
+    ctx.fillText("\u2190 \u2192 move  \u2191 rotate  \u2193 soft drop  SPACE hard drop", cx, cy + 115);
+}
+
+// ── Dead Screen ────────────────────────────────────────────
+function drawDeadScreen(time) {
+    // Dim overlay
+    ctx.fillStyle = "rgba(10,10,26,0.75)";
+    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+    var cx = CANVAS_W / 2;
+    var cy = CANVAS_H / 2 - 40;
+
+    ctx.textAlign = "center";
+    ctx.font = "bold 36px " + FONT;
+    ctx.fillStyle = RED;
+    ctx.shadowColor = RED;
+    ctx.shadowBlur = 20;
+    ctx.fillText("GAME OVER", cx, cy);
+    ctx.shadowBlur = 0;
+
+    ctx.font = "14px " + FONT;
+    ctx.fillStyle = "rgba(255,255,255,0.5)";
+    ctx.fillText("SCORE", cx, cy + 40);
+
+    ctx.font = "bold 28px " + FONT;
+    ctx.fillStyle = CYAN;
+    ctx.fillText(score.toString(), cx, cy + 72);
+
+    if (score >= highScore && score > 0) {
+        ctx.font = "12px " + FONT;
+        ctx.fillStyle = "#ffd93d";
+        ctx.fillText("NEW HIGH SCORE!", cx, cy + 96);
+    }
+
+    var blink = Math.sin(time * 3) * 0.3 + 0.7;
+    ctx.globalAlpha = blink;
+    ctx.font = "14px " + FONT;
+    ctx.fillStyle = CYAN;
+    ctx.fillText("tap or click to restart", cx, cy + 135);
+    ctx.globalAlpha = 1;
+}
+
+// ── Input ──────────────────────────────────────────────────
+var keys = {};
+var dasTimers = {};
+var DAS_DELAY = 170; // initial delay before auto-repeat
+var DAS_RATE = 50;   // repeat rate
+
+window.addEventListener("keydown", function(e) {
+    if (["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Space","KeyA","KeyD","KeyW","KeyS"].indexOf(e.code) !== -1) {
+        e.preventDefault();
+    }
+    if (phase === "START") {
+        startGame();
+        return;
+    }
+    if (phase === "DEAD") {
+        startGame();
+        return;
+    }
+    if (phase === "PLAYING") {
+        if (!keys[e.code]) {
+            keys[e.code] = true;
+            dasTimers[e.code] = { elapsed: 0, fired: false };
+            handleKeyAction(e.code);
+        }
+    }
+});
+
+window.addEventListener("keyup", function(e) {
+    keys[e.code] = false;
+    delete dasTimers[e.code];
+});
+
+function handleKeyAction(code) {
+    if (phase !== "PLAYING" || !current) return;
+    if (code === "ArrowLeft" || code === "KeyA") {
+        movePiece(-1, 0);
+    } else if (code === "ArrowRight" || code === "KeyD") {
+        movePiece(1, 0);
+    } else if (code === "ArrowUp" || code === "KeyW") {
+        tryRotate();
+    } else if (code === "ArrowDown" || code === "KeyS") {
+        if (movePiece(0, 1)) {
+            score += 1;
+            dropTimer = 0;
+        }
+    } else if (code === "Space") {
+        hardDrop();
+    }
+}
+
+function updateDAS(dt) {
+    var repeatKeys = ["ArrowLeft", "ArrowRight", "ArrowDown", "KeyA", "KeyD", "KeyS"];
+    for (var i = 0; i < repeatKeys.length; i++) {
+        var code = repeatKeys[i];
+        if (keys[code] && dasTimers[code]) {
+            dasTimers[code].elapsed += dt * 1000;
+            if (!dasTimers[code].fired) {
+                if (dasTimers[code].elapsed >= DAS_DELAY) {
+                    dasTimers[code].fired = true;
+                    dasTimers[code].elapsed = 0;
+                    handleKeyAction(code);
+                }
+            } else {
+                if (dasTimers[code].elapsed >= DAS_RATE) {
+                    dasTimers[code].elapsed -= DAS_RATE;
+                    handleKeyAction(code);
+                }
+            }
+        }
+    }
+}
+
+// ── Touch ──────────────────────────────────────────────────
+var touchStartX = 0, touchStartY = 0, touchStartTime = 0;
+var touchMoved = false;
+var swipeThreshold = 30;
+
+canvas.addEventListener("touchstart", function(e) {
+    e.preventDefault();
+    if (phase === "START" || phase === "DEAD") {
+        startGame();
+        return;
+    }
+    var t = e.touches[0];
+    touchStartX = t.clientX;
+    touchStartY = t.clientY;
+    touchStartTime = Date.now();
+    touchMoved = false;
+}, { passive: false });
+
+canvas.addEventListener("touchmove", function(e) {
+    e.preventDefault();
+    if (phase !== "PLAYING" || !current) return;
+    var t = e.touches[0];
+    var dx = t.clientX - touchStartX;
+    var dy = t.clientY - touchStartY;
+
+    if (Math.abs(dx) > swipeThreshold) {
+        touchMoved = true;
+        if (dx > 0) movePiece(1, 0);
+        else movePiece(-1, 0);
+        touchStartX = t.clientX;
+        touchStartY = t.clientY;
+    }
+    if (dy > swipeThreshold) {
+        if (movePiece(0, 1)) {
+            score += 1;
+            dropTimer = 0;
+        }
+        touchStartY = t.clientY;
+    }
+}, { passive: false });
+
+canvas.addEventListener("touchend", function(e) {
+    e.preventDefault();
+    if (phase !== "PLAYING" || !current) return;
+    var elapsed = Date.now() - touchStartTime;
+    if (!touchMoved && elapsed < 250) {
+        // Tap = rotate
+        tryRotate();
+    }
+}, { passive: false });
+
+// Mouse click
+canvas.addEventListener("click", function() {
+    if (phase === "START" || phase === "DEAD") {
+        startGame();
+    }
+});
+
+// ── Game Logic ─────────────────────────────────────────────
+function startGame() {
+    createGrid();
+    score = 0;
+    lines = 0;
+    level = 1;
+    dropInterval = 1000;
+    dropTimer = 0;
+    particles = [];
+    flashRows = [];
+    flashTimer = 0;
+    nextPiece = null;
+    current = null;
+    phase = "PLAYING";
+    spawnPiece();
+}
+
+function update(dt) {
+    // Update particles
+    for (var i = particles.length - 1; i >= 0; i--) {
+        var p = particles[i];
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.vy += 400 * dt; // gravity
+        p.life -= dt;
+        if (p.life <= 0) particles.splice(i, 1);
+    }
+
+    if (phase === "START") {
+        // Update demo blocks
+        for (var i = 0; i < demoBlocks.length; i++) {
+            var b = demoBlocks[i];
+            b.y += b.vy * dt;
+            b.rotation += b.rotSpeed * dt;
+            if (b.y > CANVAS_H + 40) {
+                b.y = -40;
+                b.x = Math.random() * CANVAS_W;
+            }
+        }
+        return;
+    }
+
+    if (phase === "DEAD") return;
+
+    // Flash timer
+    if (flashTimer > 0) {
+        flashTimer -= dt;
+        if (flashTimer < 0) {
+            flashTimer = 0;
+            flashRows = [];
+        }
+    }
+
+    // DAS
+    updateDAS(dt);
+
+    // Gravity
+    dropTimer += dt * 1000;
+    if (dropTimer >= dropInterval) {
+        dropTimer -= dropInterval;
+        if (current && !movePiece(0, 1)) {
+            lockPiece();
+            clearLines();
+            spawnPiece();
+        }
+    }
+}
+
+// ── Main Loop ──────────────────────────────────────────────
+initDemoBlocks();
+
+function loop(timestamp) {
+    requestAnimationFrame(loop);
+    if (!lastTime) lastTime = timestamp;
+    var dt = (timestamp - lastTime) / 1000;
+    if (dt > 0.1) dt = 0.1; // clamp
+    lastTime = timestamp;
+
+    update(dt);
+
+    // Clear
+    ctx.fillStyle = BG;
+    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+    if (phase === "START") {
+        drawStartScreen(timestamp / 1000);
+    } else if (phase === "PLAYING") {
+        drawGrid();
+        drawGhost();
+        drawCurrentPiece();
+        drawHUD();
+        drawParticles();
+    } else if (phase === "DEAD") {
+        drawGrid();
+        drawParticles();
+        drawHUD();
+        drawDeadScreen(timestamp / 1000);
+    }
+}
+
+requestAnimationFrame(loop);
+
+})();
+</script>
+</body>
+</html>

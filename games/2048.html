@@ -1,0 +1,1004 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="2048 game by mahowald.io — play in your browser">
+    <title>2048 — mahowald.io</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body {
+            width: 100%; height: 100%;
+            overflow: hidden;
+            background: #0a0a1a;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overscroll-behavior: none;
+            touch-action: none;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+            font-family: "SF Mono", "Fira Code", "Courier New", monospace;
+        }
+        canvas {
+            display: block;
+            border-radius: 4px;
+            box-shadow:
+                0 0 40px rgba(0, 255, 200, 0.08),
+                0 0 80px rgba(0, 255, 200, 0.04),
+                0 0 120px rgba(0, 255, 200, 0.02),
+                0 4px 30px rgba(0, 0, 0, 0.6);
+        }
+        .back-link {
+            position: fixed;
+            top: 16px;
+            left: 16px;
+            color: rgba(255, 255, 255, 0.35);
+            text-decoration: none;
+            font-family: "SF Mono", "Fira Code", "Courier New", monospace;
+            font-size: 13px;
+            letter-spacing: 1px;
+            z-index: 100;
+            transition: color 0.2s, text-shadow 0.2s;
+        }
+        .back-link:hover {
+            color: #00ffc8;
+            text-shadow: 0 0 12px rgba(0, 255, 200, 0.4);
+        }
+    </style>
+</head>
+<body>
+    <a href="/" class="back-link">&larr; BACK</a>
+    <canvas id="game" role="img" aria-label="2048 game"></canvas>
+    <script>
+    (() => {
+        'use strict';
+
+        // ── Configuration ──────────────────────────────────────────
+        const GRID = 4;
+        const ANIM_SLIDE_DURATION = 0.12;
+        const ANIM_POP_DURATION = 0.15;
+        const ANIM_SPAWN_DURATION = 0.15;
+
+        const TILE_COLORS = {
+            2:    { bg: '#1a3a4a', fg: '#a0d8e8' },
+            4:    { bg: '#1a4a3a', fg: '#a0e8c0' },
+            8:    { bg: '#ff8c42', fg: '#fff' },
+            16:   { bg: '#ff6b6b', fg: '#fff' },
+            32:   { bg: '#e74c3c', fg: '#fff' },
+            64:   { bg: '#ff3366', fg: '#fff' },
+            128:  { bg: '#ffd93d', fg: '#1a1a2e' },
+            256:  { bg: '#f0c800', fg: '#1a1a2e' },
+            512:  { bg: '#a855f7', fg: '#fff' },
+            1024: { bg: '#7c3aed', fg: '#fff' },
+            2048: { bg: '#00ffc8', fg: '#0a0a1a' },
+        };
+
+        const COLORS = {
+            bg: '#0a0a1a',
+            boardBg: '#111128',
+            cellBg: 'rgba(255, 255, 255, 0.04)',
+            cyan: '#00ffc8',
+            purple: '#a855f7',
+            scoreText: 'rgba(255, 255, 255, 0.85)',
+            highScoreText: 'rgba(255, 255, 255, 0.4)',
+            dimText: 'rgba(255, 255, 255, 0.25)',
+            gameOver: '#ff6b6b',
+        };
+
+        // ── Utilities ──────────────────────────────────────────────
+        function lerp(a, b, t) { return a + (b - a) * t; }
+        function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+        function easeOutBack(t) { const s = 1.70158; return 1 + (--t) * t * ((s + 1) * t + s); }
+        function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
+        function easeOutQuad(t) { return 1 - (1 - t) * (1 - t); }
+
+        function getTileStyle(value) {
+            if (TILE_COLORS[value]) return TILE_COLORS[value];
+            // For tiles beyond 2048 (if player continues)
+            return { bg: '#00ffc8', fg: '#0a0a1a' };
+        }
+
+        function getTileGlow(value) {
+            if (value >= 2048) return 'rgba(0, 255, 200, 0.6)';
+            if (value >= 512) return 'rgba(168, 85, 247, 0.4)';
+            if (value >= 128) return 'rgba(255, 217, 61, 0.4)';
+            if (value >= 64) return 'rgba(255, 51, 102, 0.3)';
+            if (value >= 8) return 'rgba(255, 140, 66, 0.25)';
+            return 'rgba(0, 255, 200, 0.12)';
+        }
+
+        // ── Canvas Setup ───────────────────────────────────────────
+        const canvas = document.getElementById('game');
+        const ctx = canvas.getContext('2d');
+        let dpr = 1;
+        let canvasW = 0, canvasH = 0;
+        let boardSize = 0;
+        let boardX = 0, boardY = 0;
+        let cellSize = 0;
+        let tilePad = 0;
+        let tileSize = 0;
+        let tileRadius = 0;
+        let hudHeight = 0;
+
+        function resize() {
+            dpr = window.devicePixelRatio || 1;
+            const isMobile = window.innerWidth <= 600;
+            const maxDim = Math.min(window.innerWidth, window.innerHeight) * (isMobile ? 0.92 : 0.78);
+            boardSize = Math.floor(maxDim);
+            cellSize = Math.floor(boardSize / GRID);
+            boardSize = cellSize * GRID;
+            tilePad = Math.max(4, cellSize * 0.07);
+            tileSize = cellSize - tilePad * 2;
+            tileRadius = Math.max(4, tileSize * 0.08);
+            hudHeight = Math.max(60, cellSize * 1.1);
+
+            canvasW = boardSize;
+            canvasH = boardSize + hudHeight;
+
+            canvas.width = canvasW * dpr;
+            canvas.height = canvasH * dpr;
+            canvas.style.width = canvasW + 'px';
+            canvas.style.height = canvasH + 'px';
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+            boardX = 0;
+            boardY = hudHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // ── High Score ─────────────────────────────────────────────
+        function loadHighScore() {
+            try { return parseInt(localStorage.getItem('2048_high') || '0', 10); }
+            catch { return 0; }
+        }
+        function saveHighScore(s) {
+            try { localStorage.setItem('2048_high', String(s)); }
+            catch { /* silent */ }
+        }
+
+        // ── Game State ─────────────────────────────────────────────
+        let phase = 'START'; // START, PLAYING, WON, DEAD
+        let grid = [];       // grid[r][c] = value or 0
+        let score = 0;
+        let highScore = loadHighScore();
+        let displayScore = 0;
+        let totalTime = 0;
+        let hasWon = false;
+        let continuedAfterWin = false;
+
+        // Animation state
+        let animations = [];   // sliding tiles
+        let popAnims = [];     // merge pop effects
+        let spawnAnims = [];   // new tile appear
+        let isAnimating = false;
+
+        // Particles
+        let particles = [];
+
+        function newGrid() {
+            const g = [];
+            for (let r = 0; r < GRID; r++) {
+                g.push(new Array(GRID).fill(0));
+            }
+            return g;
+        }
+
+        function copyGrid(g) {
+            return g.map(row => [...row]);
+        }
+
+        function emptyCells(g) {
+            const cells = [];
+            for (let r = 0; r < GRID; r++) {
+                for (let c = 0; c < GRID; c++) {
+                    if (g[r][c] === 0) cells.push({ r, c });
+                }
+            }
+            return cells;
+        }
+
+        function spawnTile(g) {
+            const empty = emptyCells(g);
+            if (empty.length === 0) return null;
+            const cell = empty[Math.floor(Math.random() * empty.length)];
+            const value = Math.random() < 0.9 ? 2 : 4;
+            g[cell.r][cell.c] = value;
+            return { r: cell.r, c: cell.c, value };
+        }
+
+        function initGame() {
+            grid = newGrid();
+            score = 0;
+            displayScore = 0;
+            animations = [];
+            popAnims = [];
+            spawnAnims = [];
+            particles = [];
+            hasWon = false;
+            continuedAfterWin = false;
+
+            const t1 = spawnTile(grid);
+            const t2 = spawnTile(grid);
+            if (t1) spawnAnims.push({ r: t1.r, c: t1.c, t: 0 });
+            if (t2) spawnAnims.push({ r: t2.r, c: t2.c, t: 0 });
+
+            phase = 'PLAYING';
+        }
+
+        // ── Movement ───────────────────────────────────────────────
+        function canMove(g) {
+            for (let r = 0; r < GRID; r++) {
+                for (let c = 0; c < GRID; c++) {
+                    if (g[r][c] === 0) return true;
+                    if (c < GRID - 1 && g[r][c] === g[r][c + 1]) return true;
+                    if (r < GRID - 1 && g[r][c] === g[r + 1][c]) return true;
+                }
+            }
+            return false;
+        }
+
+        // Returns { newGrid, moves, merges, scoreGained, moved }
+        // moves: [{ fromR, fromC, toR, toC, value }]
+        // merges: [{ r, c, value }]
+        function moveGrid(g, dir) {
+            const ng = newGrid();
+            const moves = [];
+            const merges = [];
+            let scoreGained = 0;
+            let moved = false;
+
+            // Process lines based on direction
+            // dir: 0=up, 1=right, 2=down, 3=left
+            for (let line = 0; line < GRID; line++) {
+                // Extract cells in the line in the direction of movement
+                const cells = [];
+                for (let i = 0; i < GRID; i++) {
+                    let r, c;
+                    if (dir === 0)      { r = i; c = line; }
+                    else if (dir === 1) { r = line; c = GRID - 1 - i; }
+                    else if (dir === 2) { r = GRID - 1 - i; c = line; }
+                    else                { r = line; c = i; }
+                    cells.push({ r, c, value: g[r][c] });
+                }
+
+                // Slide and merge
+                const result = [];
+                let skip = false;
+                const nonZero = cells.filter(ce => ce.value !== 0);
+                for (let i = 0; i < nonZero.length; i++) {
+                    if (skip) { skip = false; continue; }
+                    if (i + 1 < nonZero.length && nonZero[i].value === nonZero[i + 1].value) {
+                        // Merge
+                        result.push({
+                            value: nonZero[i].value * 2,
+                            sources: [nonZero[i], nonZero[i + 1]],
+                            merged: true,
+                        });
+                        scoreGained += nonZero[i].value * 2;
+                        skip = true;
+                    } else {
+                        result.push({
+                            value: nonZero[i].value,
+                            sources: [nonZero[i]],
+                            merged: false,
+                        });
+                    }
+                }
+
+                // Place back into grid
+                for (let i = 0; i < GRID; i++) {
+                    let r, c;
+                    if (dir === 0)      { r = i; c = line; }
+                    else if (dir === 1) { r = line; c = GRID - 1 - i; }
+                    else if (dir === 2) { r = GRID - 1 - i; c = line; }
+                    else                { r = line; c = i; }
+
+                    if (i < result.length) {
+                        ng[r][c] = result[i].value;
+                        for (const src of result[i].sources) {
+                            if (src.r !== r || src.c !== c) moved = true;
+                            moves.push({
+                                fromR: src.r, fromC: src.c,
+                                toR: r, toC: c,
+                                value: src.value,
+                            });
+                        }
+                        if (result[i].merged) {
+                            merges.push({ r, c, value: result[i].value });
+                        }
+                    } else {
+                        ng[r][c] = 0;
+                        if (g[r][c] !== 0) moved = true;
+                    }
+                }
+            }
+
+            return { newGrid: ng, moves, merges, scoreGained, moved };
+        }
+
+        function doMove(dir) {
+            if (isAnimating) return;
+            if (phase !== 'PLAYING') return;
+
+            const result = moveGrid(grid, dir);
+            if (!result.moved) return;
+
+            // Start slide animations
+            animations = [];
+            for (const m of result.moves) {
+                animations.push({
+                    fromR: m.fromR, fromC: m.fromC,
+                    toR: m.toR, toC: m.toC,
+                    value: m.value,
+                    t: 0,
+                });
+            }
+
+            // Store merge/spawn info for after animation
+            pendingResult = result;
+            isAnimating = true;
+        }
+
+        let pendingResult = null;
+
+        function finishMove() {
+            if (!pendingResult) return;
+            const result = pendingResult;
+            pendingResult = null;
+
+            grid = result.newGrid;
+            score += result.scoreGained;
+            if (score > highScore) {
+                highScore = score;
+                saveHighScore(highScore);
+            }
+
+            // Pop animations for merges
+            popAnims = [];
+            for (const m of result.merges) {
+                popAnims.push({ r: m.r, c: m.c, value: m.value, t: 0 });
+                spawnMergeParticles(m.r, m.c, m.value);
+            }
+
+            // Spawn new tile
+            const spawned = spawnTile(grid);
+            spawnAnims = [];
+            if (spawned) {
+                spawnAnims.push({ r: spawned.r, c: spawned.c, t: 0 });
+            }
+
+            animations = [];
+            isAnimating = false;
+
+            // Check win
+            if (!hasWon && !continuedAfterWin) {
+                for (let r = 0; r < GRID; r++) {
+                    for (let c = 0; c < GRID; c++) {
+                        if (grid[r][c] === 2048) {
+                            hasWon = true;
+                            phase = 'WON';
+                            return;
+                        }
+                    }
+                }
+            }
+
+            // Check game over
+            if (!canMove(grid)) {
+                phase = 'DEAD';
+            }
+        }
+
+        // ── Particles ──────────────────────────────────────────────
+        function spawnMergeParticles(r, c, value) {
+            const cx = boardX + c * cellSize + cellSize / 2;
+            const cy = boardY + r * cellSize + cellSize / 2;
+            const style = getTileStyle(value);
+            const count = value >= 128 ? 16 : 10;
+
+            for (let i = 0; i < count; i++) {
+                const angle = (Math.PI * 2 / count) * i + Math.random() * 0.4;
+                const speed = 60 + Math.random() * 100;
+                particles.push({
+                    x: cx, y: cy,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    radius: 1.5 + Math.random() * 2.5,
+                    color: style.bg,
+                    life: 1.0,
+                    decay: 1.8 + Math.random() * 1.2,
+                });
+            }
+        }
+
+        function updateParticles(dt) {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.vx * dt;
+                p.y += p.vy * dt;
+                p.vy += 150 * dt;
+                p.vx *= 0.97;
+                p.life -= p.decay * dt;
+                if (p.life <= 0) particles.splice(i, 1);
+            }
+        }
+
+        // ── Input ──────────────────────────────────────────────────
+        document.addEventListener('keydown', (e) => {
+            if (e.repeat) return;
+
+            // Direction mapping: 0=up, 1=right, 2=down, 3=left
+            const map = {
+                'ArrowUp': 0, 'w': 0, 'W': 0,
+                'ArrowRight': 1, 'd': 1, 'D': 1,
+                'ArrowDown': 2, 's': 2, 'S': 2,
+                'ArrowLeft': 3, 'a': 3, 'A': 3,
+            };
+
+            if (map[e.key] !== undefined) {
+                e.preventDefault();
+                if (phase === 'PLAYING') {
+                    doMove(map[e.key]);
+                }
+            }
+
+            // Start / restart
+            if (phase === 'START' || phase === 'DEAD') {
+                if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',
+                     'w','a','s','d','W','A','S','D',' ','Enter'].includes(e.key)) {
+                    e.preventDefault();
+                    initGame();
+                }
+            }
+
+            // Continue after win
+            if (phase === 'WON') {
+                if (['c','C',' ','Enter'].includes(e.key)) {
+                    e.preventDefault();
+                    continuedAfterWin = true;
+                    phase = 'PLAYING';
+                }
+                if (['r','R'].includes(e.key)) {
+                    e.preventDefault();
+                    initGame();
+                }
+            }
+        });
+
+        // Touch support
+        let touchStartX = 0, touchStartY = 0;
+        let touchSwiped = false;
+        const SWIPE_THRESHOLD = 30;
+
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            touchStartX = e.touches[0].clientX;
+            touchStartY = e.touches[0].clientY;
+            touchSwiped = false;
+        }, { passive: false });
+
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            if (touchSwiped) return;
+
+            const dx = e.touches[0].clientX - touchStartX;
+            const dy = e.touches[0].clientY - touchStartY;
+
+            if (Math.abs(dx) < SWIPE_THRESHOLD && Math.abs(dy) < SWIPE_THRESHOLD) return;
+
+            touchSwiped = true;
+
+            if (phase === 'PLAYING') {
+                if (Math.abs(dx) > Math.abs(dy)) {
+                    doMove(dx > 0 ? 1 : 3);
+                } else {
+                    doMove(dy > 0 ? 2 : 0);
+                }
+            }
+        }, { passive: false });
+
+        canvas.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            if (!touchSwiped) {
+                if (phase === 'START' || phase === 'DEAD') initGame();
+                if (phase === 'WON') {
+                    continuedAfterWin = true;
+                    phase = 'PLAYING';
+                }
+            }
+        }, { passive: false });
+
+        canvas.addEventListener('click', () => {
+            if (phase === 'START' || phase === 'DEAD') initGame();
+        });
+
+        // ── Rendering Helpers ──────────────────────────────────────
+        function roundedRect(x, y, w, h, r) {
+            ctx.beginPath();
+            ctx.moveTo(x + r, y);
+            ctx.arcTo(x + w, y, x + w, y + h, r);
+            ctx.arcTo(x + w, y + h, x, y + h, r);
+            ctx.arcTo(x, y + h, x, y, r);
+            ctx.arcTo(x, y, x + w, y, r);
+            ctx.closePath();
+        }
+
+        function tileFontSize(value) {
+            const digits = String(value).length;
+            if (digits <= 2) return tileSize * 0.42;
+            if (digits === 3) return tileSize * 0.34;
+            if (digits === 4) return tileSize * 0.28;
+            return tileSize * 0.22;
+        }
+
+        function drawTile(cx, cy, value, scale) {
+            if (value === 0) return;
+            const s = scale || 1;
+            const style = getTileStyle(value);
+            const glow = getTileGlow(value);
+            const sw = tileSize * s;
+            const sh = tileSize * s;
+            const sx = cx - sw / 2;
+            const sy = cy - sh / 2;
+            const sr = tileRadius * s;
+
+            // Glow
+            ctx.save();
+            ctx.shadowColor = glow;
+            ctx.shadowBlur = cellSize * 0.4 * s;
+            ctx.fillStyle = style.bg;
+            roundedRect(sx, sy, sw, sh, sr);
+            ctx.fill();
+            ctx.restore();
+
+            // Fill
+            ctx.fillStyle = style.bg;
+            roundedRect(sx, sy, sw, sh, sr);
+            ctx.fill();
+
+            // Subtle border
+            ctx.save();
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+            ctx.lineWidth = 1;
+            roundedRect(sx, sy, sw, sh, sr);
+            ctx.stroke();
+            ctx.restore();
+
+            // Inner highlight (top edge)
+            ctx.save();
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(sx + sr, sy + 1);
+            ctx.lineTo(sx + sw - sr, sy + 1);
+            ctx.stroke();
+            ctx.restore();
+
+            // Text
+            const fontSize = tileFontSize(value) * s;
+            ctx.font = `bold ${fontSize}px "SF Mono", "Fira Code", "Courier New", monospace`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = style.fg;
+            ctx.save();
+            if (value >= 128) {
+                ctx.shadowColor = style.fg;
+                ctx.shadowBlur = 6;
+            }
+            ctx.fillText(String(value), cx, cy + 1);
+            ctx.restore();
+        }
+
+        // ── Render Functions ───────────────────────────────────────
+        function renderBoard() {
+            // Board background
+            ctx.fillStyle = COLORS.boardBg;
+            roundedRect(boardX - 2, boardY - 2, boardSize + 4, boardSize + 4, 6);
+            ctx.fill();
+
+            // Board border glow
+            ctx.save();
+            ctx.strokeStyle = 'rgba(0, 255, 200, 0.06)';
+            ctx.shadowColor = 'rgba(0, 255, 200, 0.08)';
+            ctx.shadowBlur = 15;
+            ctx.lineWidth = 1;
+            roundedRect(boardX - 0.5, boardY - 0.5, boardSize + 1, boardSize + 1, 6);
+            ctx.stroke();
+            ctx.restore();
+
+            // Cell backgrounds
+            for (let r = 0; r < GRID; r++) {
+                for (let c = 0; c < GRID; c++) {
+                    const x = boardX + c * cellSize + tilePad;
+                    const y = boardY + r * cellSize + tilePad;
+                    ctx.fillStyle = COLORS.cellBg;
+                    roundedRect(x, y, tileSize, tileSize, tileRadius);
+                    ctx.fill();
+                }
+            }
+        }
+
+        function renderTiles() {
+            if (isAnimating) {
+                // During animation, draw from animation data
+                // First, collect which cells are being animated TO (to avoid drawing static tiles there)
+                const animatedTo = new Set();
+                const animatedFrom = new Set();
+                for (const a of animations) {
+                    animatedTo.add(`${a.toR},${a.toC}`);
+                    animatedFrom.add(`${a.fromR},${a.fromC}`);
+                }
+
+                // Draw static tiles that aren't involved in animation
+                for (let r = 0; r < GRID; r++) {
+                    for (let c = 0; c < GRID; c++) {
+                        // The grid hasn't been updated yet during animation
+                        // Skip drawing - all tiles are represented in animations
+                    }
+                }
+
+                // Draw sliding tiles
+                for (const a of animations) {
+                    const progress = easeOutCubic(clamp(a.t / ANIM_SLIDE_DURATION, 0, 1));
+                    const fromCx = boardX + a.fromC * cellSize + cellSize / 2;
+                    const fromCy = boardY + a.fromR * cellSize + cellSize / 2;
+                    const toCx = boardX + a.toC * cellSize + cellSize / 2;
+                    const toCy = boardY + a.toR * cellSize + cellSize / 2;
+                    const cx = lerp(fromCx, toCx, progress);
+                    const cy = lerp(fromCy, toCy, progress);
+                    drawTile(cx, cy, a.value, 1);
+                }
+            } else {
+                // Static render
+                for (let r = 0; r < GRID; r++) {
+                    for (let c = 0; c < GRID; c++) {
+                        if (grid[r][c] === 0) continue;
+
+                        const cx = boardX + c * cellSize + cellSize / 2;
+                        const cy = boardY + r * cellSize + cellSize / 2;
+
+                        // Check for pop animation
+                        let scale = 1;
+                        for (const p of popAnims) {
+                            if (p.r === r && p.c === c) {
+                                const progress = clamp(p.t / ANIM_POP_DURATION, 0, 1);
+                                scale = progress < 0.5
+                                    ? lerp(1.0, 1.2, easeOutQuad(progress * 2))
+                                    : lerp(1.2, 1.0, easeOutQuad((progress - 0.5) * 2));
+                                break;
+                            }
+                        }
+
+                        // Check for spawn animation
+                        for (const s of spawnAnims) {
+                            if (s.r === r && s.c === c) {
+                                const progress = clamp(s.t / ANIM_SPAWN_DURATION, 0, 1);
+                                scale = easeOutBack(progress);
+                                break;
+                            }
+                        }
+
+                        drawTile(cx, cy, grid[r][c], scale);
+                    }
+                }
+            }
+        }
+
+        function renderHUD() {
+            const fontSize = Math.max(13, cellSize * 0.3);
+            const labelSize = Math.max(9, cellSize * 0.18);
+            const pad = cellSize * 0.15;
+
+            // Score box
+            const boxW = cellSize * 1.5;
+            const boxH = hudHeight * 0.65;
+            const scoreBoxX = boardX + pad;
+            const scoreBoxY = (hudHeight - boxH) / 2;
+
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.03)';
+            roundedRect(scoreBoxX, scoreBoxY, boxW, boxH, 4);
+            ctx.fill();
+
+            ctx.font = `${labelSize}px "SF Mono", "Fira Code", "Courier New", monospace`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.fillStyle = COLORS.dimText;
+            ctx.fillText('SCORE', scoreBoxX + boxW / 2, scoreBoxY + boxH * 0.12);
+
+            ctx.font = `bold ${fontSize}px "SF Mono", "Fira Code", "Courier New", monospace`;
+            ctx.fillStyle = COLORS.scoreText;
+            ctx.textBaseline = 'middle';
+            ctx.fillText(String(Math.round(displayScore)), scoreBoxX + boxW / 2, scoreBoxY + boxH * 0.62);
+
+            // High score box
+            const hsBoxX = scoreBoxX + boxW + pad;
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.03)';
+            roundedRect(hsBoxX, scoreBoxY, boxW, boxH, 4);
+            ctx.fill();
+
+            ctx.font = `${labelSize}px "SF Mono", "Fira Code", "Courier New", monospace`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.fillStyle = COLORS.dimText;
+            ctx.fillText('BEST', hsBoxX + boxW / 2, scoreBoxY + boxH * 0.12);
+
+            ctx.font = `bold ${fontSize}px "SF Mono", "Fira Code", "Courier New", monospace`;
+            ctx.fillStyle = COLORS.highScoreText;
+            ctx.textBaseline = 'middle';
+            ctx.fillText(String(highScore), hsBoxX + boxW / 2, scoreBoxY + boxH * 0.62);
+        }
+
+        function renderParticles() {
+            for (const p of particles) {
+                const alpha = clamp(p.life, 0, 1);
+                const r = p.radius * p.life;
+                if (r < 0.3) continue;
+
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle = p.color;
+                ctx.shadowColor = p.color;
+                ctx.shadowBlur = r * 3;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        function renderStartScreen(time) {
+            ctx.fillStyle = COLORS.bg;
+            ctx.fillRect(0, 0, canvasW, canvasH);
+
+            const centerX = canvasW / 2;
+            const centerY = canvasH / 2;
+
+            // Subtle grid dots in background
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.03)';
+            for (let r = 0; r < GRID; r++) {
+                for (let c = 0; c < GRID; c++) {
+                    const x = boardX + c * cellSize + cellSize / 2;
+                    const y = boardY + r * cellSize + cellSize / 2;
+                    ctx.beginPath();
+                    ctx.arc(x, y, 2, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            // Floating demo tiles
+            const demoValues = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048];
+            for (let i = 0; i < 6; i++) {
+                const angle = time * 0.3 + i * (Math.PI * 2 / 6);
+                const orbitX = centerX + Math.cos(angle) * boardSize * 0.3;
+                const orbitY = centerY + Math.sin(angle) * boardSize * 0.2 + 10;
+                const alpha = 0.15 + Math.sin(time * 1.5 + i) * 0.08;
+                const demoVal = demoValues[i % demoValues.length];
+                const s = 0.45 + Math.sin(time + i) * 0.05;
+
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                drawTile(orbitX, orbitY, demoVal, s);
+                ctx.restore();
+            }
+
+            // Title
+            const titleSize = Math.max(36, cellSize * 1.8);
+            const titleY = centerY - boardSize * 0.18 + Math.sin(time * 1.5) * 3;
+            ctx.font = `bold ${titleSize}px "SF Mono", "Fira Code", "Courier New", monospace`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            const titleGrad = ctx.createLinearGradient(
+                centerX - titleSize * 1.2, titleY,
+                centerX + titleSize * 1.2, titleY
+            );
+            titleGrad.addColorStop(0, COLORS.cyan);
+            titleGrad.addColorStop(1, COLORS.purple);
+            ctx.fillStyle = titleGrad;
+            ctx.fillText('2048', centerX, titleY);
+
+            // Title glow
+            ctx.save();
+            ctx.shadowColor = COLORS.cyan;
+            ctx.shadowBlur = 30;
+            ctx.globalAlpha = 0.3;
+            ctx.fillStyle = titleGrad;
+            ctx.fillText('2048', centerX, titleY);
+            ctx.restore();
+
+            // Subtitle
+            const subSize = Math.max(10, cellSize * 0.35);
+            ctx.font = `${subSize}px "SF Mono", "Fira Code", "Courier New", monospace`;
+            ctx.fillStyle = COLORS.highScoreText;
+            ctx.fillText('mahowald.io', centerX, titleY + titleSize * 0.6);
+
+            // High score
+            if (highScore > 0) {
+                ctx.font = `${Math.max(10, cellSize * 0.3)}px "SF Mono", "Fira Code", "Courier New", monospace`;
+                ctx.fillStyle = COLORS.dimText;
+                ctx.fillText(`BEST: ${highScore}`, centerX, titleY + titleSize * 1.0);
+            }
+
+            // Instructions
+            const instrY = centerY + boardSize * 0.18;
+            const instrSize = Math.max(9, cellSize * 0.28);
+            ctx.font = `${instrSize}px "SF Mono", "Fira Code", "Courier New", monospace`;
+            ctx.fillStyle = COLORS.dimText;
+            ctx.fillText('swipe or use arrow keys to play', centerX, instrY);
+
+            // Prompt
+            const promptAlpha = 0.3 + Math.sin(time * 2.5) * 0.35 + 0.35;
+            ctx.save();
+            ctx.globalAlpha = promptAlpha;
+            const promptSize = Math.max(11, cellSize * 0.35);
+            ctx.font = `${promptSize}px "SF Mono", "Fira Code", "Courier New", monospace`;
+            ctx.fillStyle = COLORS.scoreText;
+            ctx.fillText('tap or press any key to start', centerX, centerY + boardSize * 0.35);
+            ctx.restore();
+        }
+
+        function renderWonOverlay(time) {
+            ctx.fillStyle = 'rgba(10, 10, 26, 0.8)';
+            ctx.fillRect(0, 0, canvasW, canvasH);
+
+            const centerX = canvasW / 2;
+            const centerY = canvasH / 2;
+
+            // "YOU WIN!" title
+            const titleSize = Math.max(24, cellSize * 1.4);
+            ctx.font = `bold ${titleSize}px "SF Mono", "Fira Code", "Courier New", monospace`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            const winGrad = ctx.createLinearGradient(
+                centerX - titleSize * 1.5, centerY - titleSize,
+                centerX + titleSize * 1.5, centerY - titleSize
+            );
+            winGrad.addColorStop(0, COLORS.cyan);
+            winGrad.addColorStop(1, '#ffd93d');
+
+            ctx.save();
+            ctx.shadowColor = COLORS.cyan;
+            ctx.shadowBlur = 25;
+            ctx.fillStyle = winGrad;
+            ctx.fillText('YOU WIN!', centerX, centerY - titleSize * 0.8);
+            ctx.restore();
+
+            // Score
+            const scoreSize = Math.max(14, cellSize * 0.6);
+            ctx.font = `bold ${scoreSize}px "SF Mono", "Fira Code", "Courier New", monospace`;
+            ctx.fillStyle = COLORS.scoreText;
+            ctx.fillText(`SCORE: ${score}`, centerX, centerY);
+
+            // Options
+            const optSize = Math.max(10, cellSize * 0.3);
+            ctx.font = `${optSize}px "SF Mono", "Fira Code", "Courier New", monospace`;
+
+            const promptAlpha = 0.4 + Math.sin(time * 2) * 0.3 + 0.3;
+            ctx.save();
+            ctx.globalAlpha = promptAlpha;
+            ctx.fillStyle = COLORS.cyan;
+            ctx.fillText('tap or press C to continue', centerX, centerY + titleSize * 0.7);
+            ctx.fillStyle = COLORS.dimText;
+            ctx.fillText('press R to restart', centerX, centerY + titleSize * 1.1);
+            ctx.restore();
+        }
+
+        function renderDeadOverlay(time) {
+            ctx.fillStyle = 'rgba(10, 10, 26, 0.8)';
+            ctx.fillRect(0, 0, canvasW, canvasH);
+
+            const centerX = canvasW / 2;
+            const centerY = canvasH / 2;
+
+            // "GAME OVER" title
+            const titleSize = Math.max(22, cellSize * 1.3);
+            ctx.font = `bold ${titleSize}px "SF Mono", "Fira Code", "Courier New", monospace`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.save();
+            ctx.fillStyle = COLORS.gameOver;
+            ctx.shadowColor = COLORS.gameOver;
+            ctx.shadowBlur = 20;
+            ctx.fillText('GAME OVER', centerX, centerY - titleSize * 0.9);
+            ctx.restore();
+
+            // Score
+            const scoreSize = Math.max(16, cellSize * 0.7);
+            ctx.font = `bold ${scoreSize}px "SF Mono", "Fira Code", "Courier New", monospace`;
+            ctx.fillStyle = COLORS.scoreText;
+            ctx.fillText(String(score), centerX, centerY - titleSize * 0.1);
+
+            // Label
+            const labelSize = Math.max(9, cellSize * 0.25);
+            ctx.font = `${labelSize}px "SF Mono", "Fira Code", "Courier New", monospace`;
+            ctx.fillStyle = COLORS.dimText;
+            ctx.fillText('FINAL SCORE', centerX, centerY - titleSize * 0.42);
+
+            // New high score badge
+            if (score === highScore && score > 0) {
+                const badgeSize = Math.max(10, cellSize * 0.32);
+                ctx.font = `bold ${badgeSize}px "SF Mono", "Fira Code", "Courier New", monospace`;
+                const badgeAlpha = 0.5 + Math.sin(time * 3) * 0.5;
+                ctx.fillStyle = `rgba(255, 217, 61, ${badgeAlpha})`;
+                ctx.fillText('NEW HIGH SCORE!', centerX, centerY + titleSize * 0.35);
+            }
+
+            // Restart prompt
+            const promptAlpha = 0.3 + Math.sin(time * 2.5) * 0.35 + 0.35;
+            ctx.save();
+            ctx.globalAlpha = promptAlpha;
+            const promptSize = Math.max(11, cellSize * 0.33);
+            ctx.font = `${promptSize}px "SF Mono", "Fira Code", "Courier New", monospace`;
+            ctx.fillStyle = COLORS.scoreText;
+            ctx.fillText('tap or press any key to restart', centerX, centerY + titleSize * 0.9);
+            ctx.restore();
+        }
+
+        // ── Main Loop ──────────────────────────────────────────────
+        let lastTime = 0;
+
+        function frame(timestamp) {
+            const dt = Math.min((timestamp - lastTime) / 1000, 0.1);
+            lastTime = timestamp;
+            totalTime += dt;
+
+            // Update animations
+            if (isAnimating) {
+                let allDone = true;
+                for (const a of animations) {
+                    a.t += dt;
+                    if (a.t < ANIM_SLIDE_DURATION) allDone = false;
+                }
+                if (allDone) {
+                    finishMove();
+                }
+            }
+
+            // Update pop/spawn anims
+            for (let i = popAnims.length - 1; i >= 0; i--) {
+                popAnims[i].t += dt;
+                if (popAnims[i].t >= ANIM_POP_DURATION) popAnims.splice(i, 1);
+            }
+            for (let i = spawnAnims.length - 1; i >= 0; i--) {
+                spawnAnims[i].t += dt;
+                if (spawnAnims[i].t >= ANIM_SPAWN_DURATION) spawnAnims.splice(i, 1);
+            }
+
+            // Smooth score counter
+            displayScore += (score - displayScore) * Math.min(1, dt * 12);
+
+            updateParticles(dt);
+
+            // ── Draw ───────────────────────────────────────────────
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            ctx.fillStyle = COLORS.bg;
+            ctx.fillRect(0, 0, canvasW, canvasH);
+
+            if (phase === 'START') {
+                renderStartScreen(totalTime);
+            } else {
+                renderHUD();
+                renderBoard();
+                renderTiles();
+                renderParticles();
+
+                if (phase === 'WON') {
+                    renderWonOverlay(totalTime);
+                } else if (phase === 'DEAD') {
+                    renderDeadOverlay(totalTime);
+                }
+            }
+
+            requestAnimationFrame(frame);
+        }
+
+        // ── Init ───────────────────────────────────────────────────
+        requestAnimationFrame(frame);
+    })();
+    </script>
+</body>
+</html>

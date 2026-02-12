@@ -1,0 +1,1060 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>SOKOBAN - mahowald.io</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: #0a0a1a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: "SF Mono", "Fira Code", "Courier New", monospace;
+    -webkit-user-select: none;
+    user-select: none;
+}
+canvas {
+    display: block;
+    border-radius: 4px;
+    box-shadow: 0 0 40px rgba(0,255,200,0.08), 0 0 80px rgba(0,255,200,0.04), 0 0 120px rgba(0,255,200,0.02), 0 4px 30px rgba(0,0,0,0.6);
+}
+.back-link {
+    position: fixed; top: 16px; left: 16px;
+    color: #00ffc8; text-decoration: none;
+    font-family: "SF Mono", "Fira Code", "Courier New", monospace;
+    font-size: 14px; z-index: 100; opacity: 0.7; transition: opacity 0.2s;
+}
+.back-link:hover { opacity: 1; }
+</style>
+</head>
+<body>
+<a href="/" class="back-link">&larr; BACK</a>
+<canvas id="c"></canvas>
+<script>
+(function() { "use strict";
+
+// ── Canvas Setup ──────────────────────────────────────────────
+var canvas = document.getElementById("c");
+var ctx = canvas.getContext("2d");
+var dpr = window.devicePixelRatio || 1;
+var W, H;
+
+function resize() {
+    dpr = window.devicePixelRatio || 1;
+    var maxW = window.innerWidth * 0.95;
+    var maxH = window.innerHeight * 0.92;
+    var size = Math.min(maxW, maxH, 560);
+    size = Math.floor(size);
+    canvas.style.width = size + "px";
+    canvas.style.height = size + "px";
+    canvas.width = Math.floor(size * dpr);
+    canvas.height = Math.floor(size * dpr);
+    W = canvas.width;
+    H = canvas.height;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+}
+resize();
+window.addEventListener("resize", resize);
+
+// ── Colors ────────────────────────────────────────────────────
+var BG      = "#0a0a1a";
+var CYAN    = "#00ffc8";
+var PURPLE  = "#a855f7";
+var YELLOW  = "#ffd93d";
+var RED     = "#ff6b6b";
+var GREEN   = "#22c55e";
+var WALL_CLR = "#1e1e2e";
+var WALL_BORDER = "#2a2a40";
+var FLOOR_CLR = "#111122";
+
+// ── Level Data ────────────────────────────────────────────────
+// Legend: # = wall, @ = player, $ = box, . = target, * = box on target, + = player on target, space = floor
+var LEVELS = [
+    // Level 1 - Simple introduction
+    [
+        "  ####  ",
+        "  #..#  ",
+        "  #  #  ",
+        "###  ###",
+        "#  $$  #",
+        "#  @   #",
+        "########"
+    ],
+    // Level 2 - Two boxes, straight push
+    [
+        "######",
+        "#.   #",
+        "#  $ #",
+        "# $@ #",
+        "#  . #",
+        "######"
+    ],
+    // Level 3 - L-shape
+    [
+        "  ##### ",
+        "###   # ",
+        "#.@$  # ",
+        "###$# # ",
+        "  #.# # ",
+        "  #   # ",
+        "  ##### "
+    ],
+    // Level 4 - Corridor
+    [
+        " #######",
+        " #  ...#",
+        " # #$$ #",
+        " #  $  #",
+        "## ## ##",
+        "#  @   #",
+        "#      #",
+        "########"
+    ],
+    // Level 5 - Open room
+    [
+        "########",
+        "#      #",
+        "# $$$  #",
+        "#  @   #",
+        "# ...  #",
+        "#      #",
+        "########"
+    ],
+    // Level 6 - Cross
+    [
+        "  ####  ",
+        "  #  #  ",
+        "###$.###",
+        "#  . $ #",
+        "#  .@$ #",
+        "###  ###",
+        "  #  #  ",
+        "  ####  "
+    ],
+    // Level 7 - Zigzag
+    [
+        " ###### ",
+        " # ..@# ",
+        " # ## # ",
+        "##$   ##",
+        "#  $#  #",
+        "#      #",
+        "########"
+    ],
+    // Level 8 - Four corners
+    [
+        "########",
+        "#.    .#",
+        "# #### #",
+        "# #  # #",
+        "# $ $# #",
+        "#@$ $  #",
+        "#.    .#",
+        "########"
+    ],
+    // Level 9 - Narrow passages
+    [
+        "  ######",
+        "###    #",
+        "#  $ # #",
+        "# #$ # #",
+        "#  $@  #",
+        "# ## ###",
+        "# ...#  ",
+        "######  "
+    ],
+    // Level 10 - Alcoves
+    [
+        "########",
+        "#  #   #",
+        "# .$.  #",
+        "#  #$  #",
+        "## # ###",
+        " #$  #  ",
+        " #.@ #  ",
+        " #####  "
+    ],
+    // Level 11 - Maze-like
+    [
+        " #######",
+        "##  .  #",
+        "#  #.# #",
+        "# $$   #",
+        "#  $#  #",
+        "# @ .# #",
+        "#      #",
+        "########"
+    ],
+    // Level 12 - Spiral
+    [
+        "########",
+        "#  ... #",
+        "# #### #",
+        "# #    #",
+        "# $ $$ #",
+        "#  @#  #",
+        "#      #",
+        "########"
+    ],
+    // Level 13 - Tight squeeze
+    [
+        " ###### ",
+        "## ...##",
+        "#  ### #",
+        "# $$   #",
+        "#  $  @#",
+        "# $  # #",
+        "#   .  #",
+        "########"
+    ],
+    // Level 14 - Diamond
+    [
+        "   ##   ",
+        "  ## ## ",
+        " ## . ##",
+        "## $.$ #",
+        "# $.$ ##",
+        "## .@ ##",
+        " ## ##  ",
+        "  ###   "
+    ],
+    // Level 15 - The gauntlet
+    [
+        "#########",
+        "#   #   #",
+        "# $ . $ #",
+        "#  .#.  #",
+        "## $@$ ##",
+        "#  .#.  #",
+        "# $ . $ #",
+        "#   #   #",
+        "#########"
+    ]
+];
+
+// ── Tile types ────────────────────────────────────────────────
+var EMPTY = 0, WALL = 1, FLOOR = 2, TARGET = 3;
+
+// ── Parse level ───────────────────────────────────────────────
+function parseLevel(strings) {
+    var maxW = 0;
+    for (var i = 0; i < strings.length; i++) {
+        if (strings[i].length > maxW) maxW = strings[i].length;
+    }
+    var grid = [];
+    var boxes = [];
+    var targets = [];
+    var playerX = 0, playerY = 0;
+    for (var y = 0; y < strings.length; y++) {
+        var row = [];
+        for (var x = 0; x < maxW; x++) {
+            var ch = x < strings[y].length ? strings[y][x] : " ";
+            if (ch === "#") {
+                row.push(WALL);
+            } else if (ch === " ") {
+                row.push(FLOOR);
+            } else if (ch === ".") {
+                row.push(TARGET);
+                targets.push({ x: x, y: y });
+            } else if (ch === "@") {
+                row.push(FLOOR);
+                playerX = x; playerY = y;
+            } else if (ch === "+") {
+                row.push(TARGET);
+                targets.push({ x: x, y: y });
+                playerX = x; playerY = y;
+            } else if (ch === "$") {
+                row.push(FLOOR);
+                boxes.push({ x: x, y: y });
+            } else if (ch === "*") {
+                row.push(TARGET);
+                targets.push({ x: x, y: y });
+                boxes.push({ x: x, y: y });
+            } else {
+                row.push(FLOOR);
+            }
+        }
+        grid.push(row);
+    }
+    return {
+        width: maxW,
+        height: strings.length,
+        grid: grid,
+        boxes: boxes,
+        targets: targets,
+        playerX: playerX,
+        playerY: playerY
+    };
+}
+
+// ── Flood fill to find reachable floor ────────────────────────
+function markReachableFloor(grid, w, h, px, py) {
+    var reachable = [];
+    for (var y = 0; y < h; y++) {
+        reachable[y] = [];
+        for (var x = 0; x < w; x++) {
+            reachable[y][x] = false;
+        }
+    }
+    var stack = [{ x: px, y: py }];
+    reachable[py][px] = true;
+    while (stack.length > 0) {
+        var cur = stack.pop();
+        var dirs = [[-1,0],[1,0],[0,-1],[0,1]];
+        for (var d = 0; d < dirs.length; d++) {
+            var nx = cur.x + dirs[d][0];
+            var ny = cur.y + dirs[d][1];
+            if (nx >= 0 && nx < w && ny >= 0 && ny < h && !reachable[ny][nx] && grid[ny][nx] !== WALL) {
+                reachable[ny][nx] = true;
+                stack.push({ x: nx, y: ny });
+            }
+        }
+    }
+    return reachable;
+}
+
+// ── Game State ────────────────────────────────────────────────
+var PHASE_START = 0, PHASE_PLAYING = 1, PHASE_COMPLETE = 2;
+var phase = PHASE_START;
+var currentLevel = 0;
+var levelData = null;
+var playerX = 0, playerY = 0;
+var boxes = [];
+var undoStack = [];
+var moves = 0;
+var pushes = 0;
+var animating = false;
+var animQueue = [];
+var animTime = 0;
+var ANIM_DURATION = 0.08; // seconds
+var animPlayerFrom = null;
+var animPlayerTo = null;
+var animBoxFrom = null;
+var animBoxTo = null;
+var animBoxIdx = -1;
+
+// Level select
+var selectScroll = 0;
+var selectHover = -1;
+
+// Completion
+var completeTimer = 0;
+var COMPLETE_DELAY = 2.0;
+var particles = [];
+
+// Best scores
+var bestScores = {};
+function loadScores() {
+    try {
+        var s = localStorage.getItem("sokoban_best");
+        if (s) bestScores = JSON.parse(s);
+    } catch(e) {}
+}
+function saveScores() {
+    try {
+        localStorage.setItem("sokoban_best", JSON.stringify(bestScores));
+    } catch(e) {}
+}
+loadScores();
+
+// ── Load Level ────────────────────────────────────────────────
+function loadLevel(idx) {
+    if (idx < 0 || idx >= LEVELS.length) return;
+    currentLevel = idx;
+    levelData = parseLevel(LEVELS[idx]);
+    playerX = levelData.playerX;
+    playerY = levelData.playerY;
+    boxes = [];
+    for (var i = 0; i < levelData.boxes.length; i++) {
+        boxes.push({ x: levelData.boxes[i].x, y: levelData.boxes[i].y });
+    }
+    undoStack = [];
+    moves = 0;
+    pushes = 0;
+    animating = false;
+    animQueue = [];
+    particles = [];
+    phase = PHASE_PLAYING;
+}
+
+// ── Check win ─────────────────────────────────────────────────
+function checkWin() {
+    var targets = levelData.targets;
+    for (var t = 0; t < targets.length; t++) {
+        var found = false;
+        for (var b = 0; b < boxes.length; b++) {
+            if (boxes[b].x === targets[t].x && boxes[b].y === targets[t].y) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) return false;
+    }
+    return true;
+}
+
+// ── Box at position ───────────────────────────────────────────
+function boxAt(x, y) {
+    for (var i = 0; i < boxes.length; i++) {
+        if (boxes[i].x === x && boxes[i].y === y) return i;
+    }
+    return -1;
+}
+
+function isOnTarget(x, y) {
+    return levelData.grid[y] && levelData.grid[y][x] === TARGET;
+}
+
+// ── Move player ───────────────────────────────────────────────
+function tryMove(dx, dy) {
+    if (animating) return;
+    var nx = playerX + dx;
+    var ny = playerY + dy;
+    if (ny < 0 || ny >= levelData.height || nx < 0 || nx >= levelData.width) return;
+    if (levelData.grid[ny][nx] === WALL) return;
+
+    var bi = boxAt(nx, ny);
+    if (bi >= 0) {
+        var bx = nx + dx;
+        var by = ny + dy;
+        if (by < 0 || by >= levelData.height || bx < 0 || bx >= levelData.width) return;
+        if (levelData.grid[by][bx] === WALL) return;
+        if (boxAt(bx, by) >= 0) return;
+
+        // Save undo
+        undoStack.push({
+            px: playerX, py: playerY,
+            bi: bi, bx: boxes[bi].x, by: boxes[bi].y,
+            moves: moves, pushes: pushes
+        });
+
+        // Animate
+        animating = true;
+        animTime = 0;
+        animPlayerFrom = { x: playerX, y: playerY };
+        animPlayerTo = { x: nx, y: ny };
+        animBoxFrom = { x: nx, y: ny };
+        animBoxTo = { x: bx, y: by };
+        animBoxIdx = bi;
+
+        playerX = nx;
+        playerY = ny;
+        boxes[bi].x = bx;
+        boxes[bi].y = by;
+        moves++;
+        pushes++;
+    } else {
+        // Save undo
+        undoStack.push({
+            px: playerX, py: playerY,
+            bi: -1, bx: 0, by: 0,
+            moves: moves, pushes: pushes
+        });
+
+        animating = true;
+        animTime = 0;
+        animPlayerFrom = { x: playerX, y: playerY };
+        animPlayerTo = { x: nx, y: ny };
+        animBoxFrom = null;
+        animBoxTo = null;
+        animBoxIdx = -1;
+
+        playerX = nx;
+        playerY = ny;
+        moves++;
+    }
+}
+
+// ── Undo ──────────────────────────────────────────────────────
+function undo() {
+    if (animating || undoStack.length === 0) return;
+    var state = undoStack.pop();
+    playerX = state.px;
+    playerY = state.py;
+    if (state.bi >= 0) {
+        boxes[state.bi].x = state.bx;
+        boxes[state.bi].y = state.by;
+    }
+    moves = state.moves;
+    pushes = state.pushes;
+}
+
+// ── Reset ─────────────────────────────────────────────────────
+function resetLevel() {
+    loadLevel(currentLevel);
+}
+
+// ── Particles ─────────────────────────────────────────────────
+function spawnParticles(cx, cy, count) {
+    var colors = [CYAN, PURPLE, YELLOW, GREEN, "#ffffff"];
+    for (var i = 0; i < count; i++) {
+        var angle = Math.random() * Math.PI * 2;
+        var speed = 40 + Math.random() * 120;
+        particles.push({
+            x: cx, y: cy,
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed,
+            life: 1.0,
+            decay: 0.4 + Math.random() * 0.8,
+            size: 2 + Math.random() * 4,
+            color: colors[Math.floor(Math.random() * colors.length)]
+        });
+    }
+}
+
+// ── Input ─────────────────────────────────────────────────────
+document.addEventListener("keydown", function(e) {
+    if (phase === PHASE_START) {
+        if (e.key === "Enter" || e.key === " ") {
+            loadLevel(0);
+            e.preventDefault();
+        }
+        return;
+    }
+    if (phase === PHASE_COMPLETE) {
+        if (e.key === "Enter" || e.key === " ") {
+            if (currentLevel + 1 < LEVELS.length) {
+                loadLevel(currentLevel + 1);
+            } else {
+                phase = PHASE_START;
+            }
+            e.preventDefault();
+        }
+        return;
+    }
+    // Playing
+    var dx = 0, dy = 0;
+    if (e.key === "ArrowUp" || e.key === "w" || e.key === "W") { dy = -1; }
+    else if (e.key === "ArrowDown" || e.key === "s" || e.key === "S") { dy = 1; }
+    else if (e.key === "ArrowLeft" || e.key === "a" || e.key === "A") { dx = -1; }
+    else if (e.key === "ArrowRight" || e.key === "d" || e.key === "D") { dx = 1; }
+    else if (e.key === "z" || e.key === "Z") { undo(); e.preventDefault(); return; }
+    else if (e.key === "r" || e.key === "R") { resetLevel(); e.preventDefault(); return; }
+    else if (e.key === "Escape") { phase = PHASE_START; e.preventDefault(); return; }
+
+    if (dx !== 0 || dy !== 0) {
+        tryMove(dx, dy);
+        e.preventDefault();
+    }
+});
+
+// ── Mouse / Touch for level select ────────────────────────────
+var mouseX = 0, mouseY = 0;
+canvas.addEventListener("mousemove", function(e) {
+    var r = canvas.getBoundingClientRect();
+    mouseX = (e.clientX - r.left) / r.width;
+    mouseY = (e.clientY - r.top) / r.height;
+});
+
+canvas.addEventListener("click", function(e) {
+    var r = canvas.getBoundingClientRect();
+    var cx = (e.clientX - r.left) / r.width;
+    var cy = (e.clientY - r.top) / r.height;
+
+    if (phase === PHASE_START) {
+        // Check level buttons
+        var cols = 5;
+        var btnW = 0.14;
+        var btnH = 0.08;
+        var gap = 0.03;
+        var totalW = cols * btnW + (cols - 1) * gap;
+        var startX = 0.5 - totalW / 2;
+        var startY = 0.42;
+
+        for (var i = 0; i < LEVELS.length; i++) {
+            var col = i % cols;
+            var row = Math.floor(i / cols);
+            var bx = startX + col * (btnW + gap);
+            var by = startY + row * (btnH + gap * 1.5);
+            if (cx >= bx && cx <= bx + btnW && cy >= by && cy <= by + btnH) {
+                loadLevel(i);
+                return;
+            }
+        }
+    }
+    if (phase === PHASE_COMPLETE) {
+        if (currentLevel + 1 < LEVELS.length) {
+            loadLevel(currentLevel + 1);
+        } else {
+            phase = PHASE_START;
+        }
+    }
+});
+
+// Touch swipe for playing
+var touchStartX = 0, touchStartY = 0;
+canvas.addEventListener("touchstart", function(e) {
+    if (e.touches.length === 1) {
+        touchStartX = e.touches[0].clientX;
+        touchStartY = e.touches[0].clientY;
+        e.preventDefault();
+    }
+}, { passive: false });
+
+canvas.addEventListener("touchend", function(e) {
+    if (phase === PHASE_START) {
+        var r = canvas.getBoundingClientRect();
+        var cx = (touchStartX - r.left) / r.width;
+        var cy = (touchStartY - r.top) / r.height;
+        var cols = 5;
+        var btnW = 0.14;
+        var btnH = 0.08;
+        var gap = 0.03;
+        var totalW = cols * btnW + (cols - 1) * gap;
+        var startX = 0.5 - totalW / 2;
+        var startY = 0.42;
+        for (var i = 0; i < LEVELS.length; i++) {
+            var col = i % cols;
+            var row = Math.floor(i / cols);
+            var bx = startX + col * (btnW + gap);
+            var by = startY + row * (btnH + gap * 1.5);
+            if (cx >= bx && cx <= bx + btnW && cy >= by && cy <= by + btnH) {
+                loadLevel(i);
+                e.preventDefault();
+                return;
+            }
+        }
+        return;
+    }
+    if (phase === PHASE_COMPLETE) {
+        if (currentLevel + 1 < LEVELS.length) {
+            loadLevel(currentLevel + 1);
+        } else {
+            phase = PHASE_START;
+        }
+        e.preventDefault();
+        return;
+    }
+    if (phase !== PHASE_PLAYING) return;
+    var t = e.changedTouches[0];
+    var dx = t.clientX - touchStartX;
+    var dy = t.clientY - touchStartY;
+    var dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < 20) return;
+    if (Math.abs(dx) > Math.abs(dy)) {
+        tryMove(dx > 0 ? 1 : -1, 0);
+    } else {
+        tryMove(0, dy > 0 ? 1 : -1);
+    }
+    e.preventDefault();
+}, { passive: false });
+
+// ── Drawing helpers ───────────────────────────────────────────
+function s(v) { return v * W; }
+
+function drawRoundedRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+}
+
+// ── Render: Start Screen ──────────────────────────────────────
+function drawStartScreen(t) {
+    ctx.fillStyle = BG;
+    ctx.fillRect(0, 0, W, H);
+
+    // Title
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = CYAN;
+    ctx.font = "bold " + s(0.07) + "px 'SF Mono', 'Fira Code', 'Courier New', monospace";
+    ctx.shadowColor = CYAN;
+    ctx.shadowBlur = s(0.02);
+    ctx.fillText("SOKOBAN", W / 2, s(0.12));
+    ctx.shadowBlur = 0;
+
+    ctx.fillStyle = "#666";
+    ctx.font = s(0.022) + "px 'SF Mono', 'Fira Code', 'Courier New', monospace";
+    ctx.fillText("Push all boxes onto targets", W / 2, s(0.20));
+
+    // Controls
+    ctx.fillStyle = "#555";
+    ctx.font = s(0.018) + "px 'SF Mono', 'Fira Code', 'Courier New', monospace";
+    ctx.fillText("ARROWS / WASD = Move  |  Z = Undo  |  R = Reset  |  ESC = Menu", W / 2, s(0.27));
+
+    // Subtitle
+    ctx.fillStyle = YELLOW;
+    ctx.font = s(0.024) + "px 'SF Mono', 'Fira Code', 'Courier New', monospace";
+    ctx.fillText("SELECT LEVEL", W / 2, s(0.35));
+
+    // Level grid
+    var cols = 5;
+    var btnW = 0.14;
+    var btnH = 0.08;
+    var gap = 0.03;
+    var totalW = cols * btnW + (cols - 1) * gap;
+    var startX = 0.5 - totalW / 2;
+    var startY = 0.42;
+
+    for (var i = 0; i < LEVELS.length; i++) {
+        var col = i % cols;
+        var row = Math.floor(i / cols);
+        var bx = startX + col * (btnW + gap);
+        var by = startY + row * (btnH + gap * 1.5);
+
+        var key = "L" + i;
+        var completed = bestScores[key] !== undefined;
+
+        // Button background
+        var hover = mouseX >= bx && mouseX <= bx + btnW && mouseY >= by && mouseY <= by + btnH;
+        if (completed) {
+            ctx.fillStyle = hover ? "#1a3a2a" : "#0f2a1a";
+        } else {
+            ctx.fillStyle = hover ? "#1a1a30" : "#12122a";
+        }
+        drawRoundedRect(s(bx), s(by), s(btnW), s(btnH), s(0.008));
+        ctx.fill();
+
+        // Border
+        ctx.strokeStyle = completed ? GREEN : (hover ? CYAN : "#333");
+        ctx.lineWidth = s(0.002);
+        drawRoundedRect(s(bx), s(by), s(btnW), s(btnH), s(0.008));
+        ctx.stroke();
+
+        // Level number
+        ctx.fillStyle = completed ? GREEN : (hover ? CYAN : "#888");
+        ctx.font = "bold " + s(0.026) + "px 'SF Mono', 'Fira Code', 'Courier New', monospace";
+        ctx.fillText("" + (i + 1), s(bx + btnW / 2), s(by + btnH * 0.42));
+
+        // Best moves
+        if (completed) {
+            ctx.fillStyle = "#5a5";
+            ctx.font = s(0.014) + "px 'SF Mono', 'Fira Code', 'Courier New', monospace";
+            ctx.fillText(bestScores[key] + " moves", s(bx + btnW / 2), s(by + btnH * 0.78));
+        }
+    }
+
+    // Pulsing hint
+    var alpha = 0.4 + 0.3 * Math.sin(t * 3);
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = "#666";
+    ctx.font = s(0.02) + "px 'SF Mono', 'Fira Code', 'Courier New', monospace";
+    ctx.fillText("Click a level or press ENTER to start", W / 2, s(0.92));
+    ctx.globalAlpha = 1;
+}
+
+// ── Render: Playing ───────────────────────────────────────────
+function drawPlaying(t, dt) {
+    ctx.fillStyle = BG;
+    ctx.fillRect(0, 0, W, H);
+
+    var lw = levelData.width;
+    var lh = levelData.height;
+
+    // Calculate tile size and offset to center
+    var headerH = 0.08;
+    var footerH = 0.06;
+    var availW = W;
+    var availH = W * (1 - headerH - footerH);
+    var tileSize = Math.floor(Math.min(availW / lw, availH / lh) * 0.88);
+    var offX = Math.floor((W - lw * tileSize) / 2);
+    var offY = Math.floor(W * headerH + (availH - lh * tileSize) / 2);
+
+    // Compute reachable area for nicer rendering
+    var reachable = markReachableFloor(levelData.grid, lw, lh, playerX, playerY);
+
+    // Draw floor, walls, targets
+    for (var y = 0; y < lh; y++) {
+        for (var x = 0; x < lw; x++) {
+            var tile = levelData.grid[y][x];
+            var px = offX + x * tileSize;
+            var py = offY + y * tileSize;
+            var pad = 1;
+
+            if (tile === WALL) {
+                // Wall
+                ctx.fillStyle = WALL_CLR;
+                drawRoundedRect(px + pad, py + pad, tileSize - pad * 2, tileSize - pad * 2, tileSize * 0.1);
+                ctx.fill();
+                ctx.strokeStyle = WALL_BORDER;
+                ctx.lineWidth = 1;
+                drawRoundedRect(px + pad, py + pad, tileSize - pad * 2, tileSize - pad * 2, tileSize * 0.1);
+                ctx.stroke();
+            } else if (tile === FLOOR || tile === TARGET) {
+                if (!reachable[y][x]) continue;
+                // Floor
+                ctx.fillStyle = FLOOR_CLR;
+                ctx.fillRect(px + pad, py + pad, tileSize - pad * 2, tileSize - pad * 2);
+
+                if (tile === TARGET) {
+                    // Target marker - diamond
+                    var cx = px + tileSize / 2;
+                    var cy_t = py + tileSize / 2;
+                    var r = tileSize * 0.18;
+                    ctx.save();
+                    ctx.globalAlpha = 0.5 + 0.2 * Math.sin(t * 3);
+                    ctx.strokeStyle = YELLOW;
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(cx, cy_t - r);
+                    ctx.lineTo(cx + r, cy_t);
+                    ctx.lineTo(cx, cy_t + r);
+                    ctx.lineTo(cx - r, cy_t);
+                    ctx.closePath();
+                    ctx.stroke();
+                    ctx.fillStyle = YELLOW;
+                    ctx.globalAlpha = 0.12 + 0.06 * Math.sin(t * 3);
+                    ctx.fill();
+                    ctx.restore();
+                }
+            }
+        }
+    }
+
+    // Lerp factor for animation
+    var animLerp = 1;
+    if (animating) {
+        animLerp = Math.min(animTime / ANIM_DURATION, 1);
+        if (animLerp >= 1) animLerp = 1;
+    }
+
+    // Draw boxes
+    for (var b = 0; b < boxes.length; b++) {
+        var bx, by;
+        if (animating && b === animBoxIdx && animBoxFrom && animBoxTo) {
+            bx = animBoxFrom.x + (animBoxTo.x - animBoxFrom.x) * animLerp;
+            by = animBoxFrom.y + (animBoxTo.y - animBoxFrom.y) * animLerp;
+        } else {
+            bx = boxes[b].x;
+            by = boxes[b].y;
+        }
+        var bpx = offX + bx * tileSize;
+        var bpy = offY + by * tileSize;
+        var onTarget = isOnTarget(boxes[b].x, boxes[b].y);
+        var bpad = tileSize * 0.12;
+
+        ctx.fillStyle = onTarget ? GREEN : PURPLE;
+        ctx.shadowColor = onTarget ? GREEN : PURPLE;
+        ctx.shadowBlur = tileSize * 0.25;
+        drawRoundedRect(bpx + bpad, bpy + bpad, tileSize - bpad * 2, tileSize - bpad * 2, tileSize * 0.15);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+
+        // Inner highlight
+        ctx.strokeStyle = onTarget ? "#44ee88" : "#c084fc";
+        ctx.lineWidth = 1.5;
+        drawRoundedRect(bpx + bpad, bpy + bpad, tileSize - bpad * 2, tileSize - bpad * 2, tileSize * 0.15);
+        ctx.stroke();
+    }
+
+    // Draw player
+    var ppx, ppy;
+    if (animating && animPlayerFrom && animPlayerTo) {
+        var ax = animPlayerFrom.x + (animPlayerTo.x - animPlayerFrom.x) * animLerp;
+        var ay = animPlayerFrom.y + (animPlayerTo.y - animPlayerFrom.y) * animLerp;
+        ppx = offX + ax * tileSize + tileSize / 2;
+        ppy = offY + ay * tileSize + tileSize / 2;
+    } else {
+        ppx = offX + playerX * tileSize + tileSize / 2;
+        ppy = offY + playerY * tileSize + tileSize / 2;
+    }
+
+    var pRadius = tileSize * 0.3;
+
+    // Glow
+    ctx.shadowColor = CYAN;
+    ctx.shadowBlur = tileSize * 0.5;
+    ctx.fillStyle = CYAN;
+    ctx.beginPath();
+    ctx.arc(ppx, ppy, pRadius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // Inner lighter circle
+    ctx.fillStyle = "#88ffee";
+    ctx.beginPath();
+    ctx.arc(ppx, ppy, pRadius * 0.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Eyes
+    var eyeOff = pRadius * 0.28;
+    var eyeR = pRadius * 0.12;
+    ctx.fillStyle = "#0a0a1a";
+    ctx.beginPath();
+    ctx.arc(ppx - eyeOff, ppy - pRadius * 0.1, eyeR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(ppx + eyeOff, ppy - pRadius * 0.1, eyeR, 0, Math.PI * 2);
+    ctx.fill();
+
+    // HUD - top
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.fillStyle = "#666";
+    ctx.font = s(0.022) + "px 'SF Mono', 'Fira Code', 'Courier New', monospace";
+    ctx.fillText("Level " + (currentLevel + 1) + "/" + LEVELS.length, s(0.03), s(0.02));
+
+    ctx.textAlign = "right";
+    ctx.fillStyle = CYAN;
+    ctx.fillText("Moves: " + moves, W - s(0.03), s(0.02));
+    ctx.fillStyle = PURPLE;
+    ctx.fillText("Pushes: " + pushes, W - s(0.03), s(0.05));
+
+    // HUD - bottom
+    ctx.textAlign = "center";
+    ctx.textBaseline = "bottom";
+    ctx.fillStyle = "#444";
+    ctx.font = s(0.016) + "px 'SF Mono', 'Fira Code', 'Courier New', monospace";
+    ctx.fillText("Z=Undo  R=Reset  ESC=Menu", W / 2, H - s(0.015));
+
+    // Best score indicator
+    var key = "L" + currentLevel;
+    if (bestScores[key] !== undefined) {
+        ctx.textAlign = "left";
+        ctx.fillStyle = GREEN;
+        ctx.font = s(0.018) + "px 'SF Mono', 'Fira Code', 'Courier New', monospace";
+        ctx.fillText("Best: " + bestScores[key], s(0.03), s(0.05));
+    }
+}
+
+// ── Render: Level Complete ────────────────────────────────────
+function drawComplete(t) {
+    // Still draw the level behind
+    drawPlaying(t, 0);
+
+    // Overlay
+    ctx.fillStyle = "rgba(10,10,26,0.7)";
+    ctx.fillRect(0, 0, W, H);
+
+    // Particles
+    for (var i = 0; i < particles.length; i++) {
+        var p = particles[i];
+        if (p.life <= 0) continue;
+        ctx.globalAlpha = p.life;
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size * dpr, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // Text
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = GREEN;
+    ctx.shadowColor = GREEN;
+    ctx.shadowBlur = s(0.02);
+    ctx.font = "bold " + s(0.06) + "px 'SF Mono', 'Fira Code', 'Courier New', monospace";
+    ctx.fillText("LEVEL COMPLETE!", W / 2, s(0.35));
+    ctx.shadowBlur = 0;
+
+    ctx.fillStyle = CYAN;
+    ctx.font = s(0.03) + "px 'SF Mono', 'Fira Code', 'Courier New', monospace";
+    ctx.fillText("Moves: " + moves + "  Pushes: " + pushes, W / 2, s(0.46));
+
+    var key = "L" + currentLevel;
+    if (bestScores[key] !== undefined) {
+        ctx.fillStyle = YELLOW;
+        ctx.font = s(0.024) + "px 'SF Mono', 'Fira Code', 'Courier New', monospace";
+        if (moves <= bestScores[key]) {
+            ctx.fillText("NEW BEST!", W / 2, s(0.53));
+        } else {
+            ctx.fillText("Best: " + bestScores[key] + " moves", W / 2, s(0.53));
+        }
+    }
+
+    var alpha = 0.4 + 0.3 * Math.sin(t * 3);
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = "#888";
+    ctx.font = s(0.022) + "px 'SF Mono', 'Fira Code', 'Courier New', monospace";
+    if (currentLevel + 1 < LEVELS.length) {
+        ctx.fillText("Press ENTER or click for next level", W / 2, s(0.62));
+    } else {
+        ctx.fillText("All levels complete! Press ENTER for menu", W / 2, s(0.62));
+    }
+    ctx.globalAlpha = 1;
+}
+
+// ── Main Loop ─────────────────────────────────────────────────
+var lastTime = 0;
+var totalTime = 0;
+
+function gameLoop(timestamp) {
+    var dt = (timestamp - lastTime) / 1000;
+    if (dt > 0.1) dt = 0.016;
+    lastTime = timestamp;
+    totalTime += dt;
+
+    // Update animation
+    if (animating) {
+        animTime += dt;
+        if (animTime >= ANIM_DURATION) {
+            animating = false;
+            animPlayerFrom = null;
+            animPlayerTo = null;
+            animBoxFrom = null;
+            animBoxTo = null;
+            animBoxIdx = -1;
+
+            // Check win after animation completes
+            if (phase === PHASE_PLAYING && checkWin()) {
+                phase = PHASE_COMPLETE;
+                completeTimer = 0;
+
+                // Save best
+                var key = "L" + currentLevel;
+                if (bestScores[key] === undefined || moves < bestScores[key]) {
+                    bestScores[key] = moves;
+                    saveScores();
+                }
+
+                // Spawn particles
+                for (var i = 0; i < 5; i++) {
+                    setTimeout(function() {
+                        spawnParticles(
+                            W * (0.2 + Math.random() * 0.6),
+                            H * (0.2 + Math.random() * 0.4),
+                            30
+                        );
+                    }, i * 150);
+                }
+                spawnParticles(W / 2, H * 0.35, 50);
+            }
+        }
+    }
+
+    // Update particles
+    for (var i = particles.length - 1; i >= 0; i--) {
+        var p = particles[i];
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.vy += 60 * dt; // gravity
+        p.life -= p.decay * dt;
+        if (p.life <= 0) {
+            particles.splice(i, 1);
+        }
+    }
+
+    // Render
+    ctx.save();
+    if (phase === PHASE_START) {
+        drawStartScreen(totalTime);
+    } else if (phase === PHASE_PLAYING) {
+        drawPlaying(totalTime, dt);
+    } else if (phase === PHASE_COMPLETE) {
+        completeTimer += dt;
+        drawComplete(totalTime);
+    }
+    ctx.restore();
+
+    requestAnimationFrame(gameLoop);
+}
+
+requestAnimationFrame(gameLoop);
+
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,1099 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>SUDOKU - mahowald.io</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: #0a0a1a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: "SF Mono", "Fira Code", "Courier New", monospace;
+    -webkit-user-select: none;
+    user-select: none;
+}
+canvas {
+    display: block;
+    border-radius: 4px;
+    box-shadow: 0 0 40px rgba(0,255,200,0.08), 0 0 80px rgba(0,255,200,0.04), 0 0 120px rgba(0,255,200,0.02), 0 4px 30px rgba(0,0,0,0.6);
+}
+.back-link {
+    position: fixed; top: 16px; left: 16px;
+    color: #00ffc8; text-decoration: none;
+    font-family: "SF Mono", "Fira Code", "Courier New", monospace;
+    font-size: 14px; z-index: 100; opacity: 0.7; transition: opacity 0.2s;
+}
+.back-link:hover { opacity: 1; }
+</style>
+</head>
+<body>
+<a href="/" class="back-link">&larr; BACK</a>
+<canvas id="c"></canvas>
+<script>
+(function() { "use strict";
+
+// --- Design tokens ---
+const BG       = "#0a0a1a";
+const CYAN     = "#00ffc8";
+const PURPLE   = "#a855f7";
+const YELLOW   = "#ffd93d";
+const RED      = "#ff6b6b";
+const BLUE     = "#3b82f6";
+const WHITE    = "#e8e8e8";
+const FONT     = '"SF Mono", "Fira Code", "Courier New", monospace';
+
+// --- Game phases ---
+const PHASE_START   = 0;
+const PHASE_PLAYING = 1;
+const PHASE_WIN     = 2;
+
+// --- Difficulty ---
+const DIFF_EASY   = 0;
+const DIFF_MEDIUM = 1;
+const DIFF_HARD   = 2;
+const DIFF_NAMES  = ["EASY", "MEDIUM", "HARD"];
+const DIFF_GIVENS = [
+    [36, 42],   // Easy: 36-42 givens
+    [28, 34],   // Medium: 28-34 givens
+    [22, 27]    // Hard: 22-27 givens
+];
+
+// --- Canvas setup ---
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+let dpr = 1;
+let W = 500, H = 650;
+let CELL = 0;
+let GRID_X = 0, GRID_Y = 0;
+let GRID_SIZE = 0;
+let PAD_Y = 0;
+let PAD_CELL = 0;
+
+function resize() {
+    dpr = window.devicePixelRatio || 1;
+    const maxW = Math.min(window.innerWidth - 24, 520);
+    const maxH = Math.min(window.innerHeight - 24, 700);
+    const scale = Math.min(maxW / 500, maxH / 650);
+    W = Math.floor(500 * scale);
+    H = Math.floor(650 * scale);
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    canvas.style.width = W + "px";
+    canvas.style.height = H + "px";
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    // Layout calculations
+    GRID_SIZE = Math.floor(W * 0.9);
+    CELL = Math.floor(GRID_SIZE / 9);
+    GRID_SIZE = CELL * 9;
+    GRID_X = Math.floor((W - GRID_SIZE) / 2);
+    GRID_Y = Math.floor(H * 0.08);
+
+    PAD_Y = GRID_Y + GRID_SIZE + Math.floor(H * 0.025);
+    PAD_CELL = Math.floor(Math.min((GRID_SIZE - 8 * 4) / 9, H * 0.065));
+}
+window.addEventListener("resize", resize);
+resize();
+
+// --- State ---
+let phase = PHASE_START;
+let difficulty = DIFF_EASY;
+let solution = [];      // 9x9 complete solution
+let puzzle = [];        // 9x9 initial puzzle (0 = empty)
+let board = [];         // 9x9 current player board
+let notes = [];         // 9x9 array of Sets (pencil marks)
+let given = [];         // 9x9 boolean: is this a given?
+let selRow = -1, selCol = -1;
+let pencilMode = false;
+let undoStack = [];
+let startTime = 0;
+let elapsed = 0;
+let paused = false;
+let particles = [];
+let winTime = 0;
+let hoverDiff = -1;     // hovered difficulty on start screen
+let hoverNum = -1;      // hovered number pad button
+let hoverPencil = false;
+let hoverUndo = false;
+let hoverErase = false;
+let errorCells = [];     // [{r,c}] cells with errors
+let errorFlash = 0;
+
+// --- localStorage helpers ---
+function loadBest(diff) {
+    try {
+        const v = localStorage.getItem("sudoku_best_" + diff);
+        return v ? parseFloat(v) : null;
+    } catch(e) { return null; }
+}
+function saveBest(diff, t) {
+    try { localStorage.setItem("sudoku_best_" + diff, t.toString()); } catch(e) {}
+}
+
+// --- Sudoku Generator ---
+function createEmptyGrid() {
+    const g = [];
+    for (let i = 0; i < 9; i++) {
+        g[i] = new Array(9).fill(0);
+    }
+    return g;
+}
+
+function isValid(grid, row, col, num) {
+    for (let c = 0; c < 9; c++) {
+        if (grid[row][c] === num) return false;
+    }
+    for (let r = 0; r < 9; r++) {
+        if (grid[r][col] === num) return false;
+    }
+    const br = Math.floor(row / 3) * 3;
+    const bc = Math.floor(col / 3) * 3;
+    for (let r = br; r < br + 3; r++) {
+        for (let c = bc; c < bc + 3; c++) {
+            if (grid[r][c] === num) return false;
+        }
+    }
+    return true;
+}
+
+function shuffle(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+}
+
+function solveSudoku(grid) {
+    for (let r = 0; r < 9; r++) {
+        for (let c = 0; c < 9; c++) {
+            if (grid[r][c] === 0) {
+                const nums = shuffle([1,2,3,4,5,6,7,8,9]);
+                for (const n of nums) {
+                    if (isValid(grid, r, c, n)) {
+                        grid[r][c] = n;
+                        if (solveSudoku(grid)) return true;
+                        grid[r][c] = 0;
+                    }
+                }
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+// Count solutions (up to 2, for uniqueness check)
+function countSolutions(grid, limit) {
+    for (let r = 0; r < 9; r++) {
+        for (let c = 0; c < 9; c++) {
+            if (grid[r][c] === 0) {
+                let count = 0;
+                for (let n = 1; n <= 9; n++) {
+                    if (isValid(grid, r, c, n)) {
+                        grid[r][c] = n;
+                        count += countSolutions(grid, limit - count);
+                        grid[r][c] = 0;
+                        if (count >= limit) return count;
+                    }
+                }
+                return count;
+            }
+        }
+    }
+    return 1;
+}
+
+function generatePuzzle(diff) {
+    // Generate complete solution
+    const sol = createEmptyGrid();
+    solveSudoku(sol);
+
+    // Copy for puzzle
+    const puz = sol.map(row => row.slice());
+
+    // Determine number of cells to remove
+    const [minGiven, maxGiven] = DIFF_GIVENS[diff];
+    const targetGivens = minGiven + Math.floor(Math.random() * (maxGiven - minGiven + 1));
+    const toRemove = 81 - targetGivens;
+
+    // Create list of all positions, shuffle, try removing
+    const positions = [];
+    for (let r = 0; r < 9; r++) {
+        for (let c = 0; c < 9; c++) {
+            positions.push([r, c]);
+        }
+    }
+    shuffle(positions);
+
+    let removed = 0;
+    for (const [r, c] of positions) {
+        if (removed >= toRemove) break;
+        const backup = puz[r][c];
+        puz[r][c] = 0;
+
+        // Check uniqueness
+        const test = puz.map(row => row.slice());
+        if (countSolutions(test, 2) === 1) {
+            removed++;
+        } else {
+            puz[r][c] = backup;
+        }
+    }
+
+    return { solution: sol, puzzle: puz };
+}
+
+function startGame(diff) {
+    difficulty = diff;
+    const gen = generatePuzzle(diff);
+    solution = gen.solution;
+    puzzle = gen.puzzle;
+    board = puzzle.map(row => row.slice());
+    given = [];
+    notes = [];
+    for (let r = 0; r < 9; r++) {
+        given[r] = [];
+        notes[r] = [];
+        for (let c = 0; c < 9; c++) {
+            given[r][c] = puzzle[r][c] !== 0;
+            notes[r][c] = new Set();
+        }
+    }
+    selRow = -1;
+    selCol = -1;
+    pencilMode = false;
+    undoStack = [];
+    errorCells = [];
+    errorFlash = 0;
+    startTime = performance.now();
+    elapsed = 0;
+    particles = [];
+    phase = PHASE_PLAYING;
+}
+
+// --- Undo ---
+function pushUndo() {
+    undoStack.push({
+        board: board.map(r => r.slice()),
+        notes: notes.map(r => r.map(s => new Set(s)))
+    });
+    if (undoStack.length > 200) undoStack.shift();
+}
+
+function popUndo() {
+    if (undoStack.length === 0) return;
+    const state = undoStack.pop();
+    board = state.board;
+    notes = state.notes;
+    updateErrors();
+}
+
+// --- Error detection ---
+function updateErrors() {
+    errorCells = [];
+    for (let r = 0; r < 9; r++) {
+        for (let c = 0; c < 9; c++) {
+            if (board[r][c] !== 0 && !given[r][c]) {
+                if (board[r][c] !== solution[r][c]) {
+                    errorCells.push({r, c});
+                }
+            }
+        }
+    }
+}
+
+// --- Check win ---
+function checkWin() {
+    for (let r = 0; r < 9; r++) {
+        for (let c = 0; c < 9; c++) {
+            if (board[r][c] !== solution[r][c]) return false;
+        }
+    }
+    return true;
+}
+
+// --- Place number ---
+function placeNumber(num) {
+    if (selRow < 0 || selCol < 0) return;
+    if (given[selRow][selCol]) return;
+
+    pushUndo();
+
+    if (pencilMode) {
+        board[selRow][selCol] = 0;
+        if (notes[selRow][selCol].has(num)) {
+            notes[selRow][selCol].delete(num);
+        } else {
+            notes[selRow][selCol].add(num);
+        }
+    } else {
+        notes[selRow][selCol].clear();
+        board[selRow][selCol] = num;
+        // Remove this note from peers
+        for (let c = 0; c < 9; c++) {
+            if (c !== selCol) notes[selRow][c].delete(num);
+        }
+        for (let r = 0; r < 9; r++) {
+            if (r !== selRow) notes[r][selCol].delete(num);
+        }
+        const br = Math.floor(selRow / 3) * 3;
+        const bc = Math.floor(selCol / 3) * 3;
+        for (let r = br; r < br + 3; r++) {
+            for (let c = bc; c < bc + 3; c++) {
+                if (r !== selRow || c !== selCol) notes[r][c].delete(num);
+            }
+        }
+    }
+    updateErrors();
+
+    if (checkWin()) {
+        phase = PHASE_WIN;
+        elapsed = (performance.now() - startTime) / 1000;
+        winTime = performance.now();
+        const best = loadBest(difficulty);
+        if (best === null || elapsed < best) {
+            saveBest(difficulty, elapsed);
+        }
+        // Spawn celebration particles
+        for (let i = 0; i < 12; i++) {
+            setTimeout(() => {
+                spawnParticles(
+                    Math.random() * W,
+                    Math.random() * H * 0.5,
+                    25,
+                    [CYAN, PURPLE, YELLOW, BLUE][Math.floor(Math.random() * 4)],
+                    180
+                );
+            }, i * 120);
+        }
+    }
+}
+
+function eraseCell() {
+    if (selRow < 0 || selCol < 0) return;
+    if (given[selRow][selCol]) return;
+    if (board[selRow][selCol] === 0 && notes[selRow][selCol].size === 0) return;
+    pushUndo();
+    board[selRow][selCol] = 0;
+    notes[selRow][selCol].clear();
+    updateErrors();
+}
+
+// --- Particles ---
+function spawnParticles(x, y, count, color, speed) {
+    for (let i = 0; i < count; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const vel = speed * (0.3 + Math.random() * 0.7);
+        particles.push({
+            x, y,
+            vx: Math.cos(angle) * vel,
+            vy: Math.sin(angle) * vel,
+            life: 1,
+            decay: 0.008 + Math.random() * 0.015,
+            size: 2 + Math.random() * 3,
+            color
+        });
+    }
+}
+
+function updateParticles(dt) {
+    for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.vy += 100 * dt;
+        p.life -= p.decay;
+        if (p.life <= 0) particles.splice(i, 1);
+    }
+}
+
+function drawParticles() {
+    for (const p of particles) {
+        ctx.globalAlpha = p.life;
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+}
+
+// --- Hit testing ---
+function getCellFromPos(px, py) {
+    const rect = canvas.getBoundingClientRect();
+    const x = px - rect.left;
+    const y = py - rect.top;
+    const col = Math.floor((x - GRID_X) / CELL);
+    const row = Math.floor((y - GRID_Y) / CELL);
+    if (col >= 0 && col < 9 && row >= 0 && row < 9) {
+        return { r: row, c: col };
+    }
+    return null;
+}
+
+function getNumPadFromPos(px, py) {
+    const rect = canvas.getBoundingClientRect();
+    const x = px - rect.left;
+    const y = py - rect.top;
+    const totalPadW = 9 * PAD_CELL + 8 * 4;
+    const padX = Math.floor((W - totalPadW) / 2);
+    for (let i = 0; i < 9; i++) {
+        const bx = padX + i * (PAD_CELL + 4);
+        const by = PAD_Y;
+        if (x >= bx && x < bx + PAD_CELL && y >= by && y < by + PAD_CELL) {
+            return i + 1;
+        }
+    }
+    return 0;
+}
+
+function getToolbarFromPos(px, py) {
+    const rect = canvas.getBoundingClientRect();
+    const x = px - rect.left;
+    const y = py - rect.top;
+    const toolY = PAD_Y + PAD_CELL + Math.floor(H * 0.018);
+    const btnW = Math.floor(W * 0.2);
+    const btnH = Math.floor(H * 0.04);
+    const gap = Math.floor(W * 0.04);
+    const totalW = 3 * btnW + 2 * gap;
+    const startX = Math.floor((W - totalW) / 2);
+
+    // Pencil button
+    if (x >= startX && x < startX + btnW && y >= toolY && y < toolY + btnH) {
+        return "pencil";
+    }
+    // Undo button
+    if (x >= startX + btnW + gap && x < startX + 2 * btnW + gap && y >= toolY && y < toolY + btnH) {
+        return "undo";
+    }
+    // Erase button
+    if (x >= startX + 2 * (btnW + gap) && x < startX + 3 * btnW + 2 * gap && y >= toolY && y < toolY + btnH) {
+        return "erase";
+    }
+    return null;
+}
+
+function getDiffFromPos(px, py) {
+    const rect = canvas.getBoundingClientRect();
+    const x = px - rect.left;
+    const y = py - rect.top;
+    const centerX = W / 2;
+    const centerY = H / 2;
+    const btnW = Math.floor(W * 0.4);
+    const btnH = Math.floor(H * 0.055);
+    const gap = Math.floor(H * 0.02);
+    const startY = centerY + Math.floor(H * 0.02);
+
+    for (let i = 0; i < 3; i++) {
+        const bx = centerX - btnW / 2;
+        const by = startY + i * (btnH + gap);
+        if (x >= bx && x < bx + btnW && y >= by && y < by + btnH) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+// --- Input handling ---
+canvas.addEventListener("mousedown", function(e) {
+    e.preventDefault();
+    handleClick(e.clientX, e.clientY);
+});
+
+canvas.addEventListener("mousemove", function(e) {
+    if (phase === PHASE_START) {
+        hoverDiff = getDiffFromPos(e.clientX, e.clientY);
+    } else if (phase === PHASE_PLAYING) {
+        hoverNum = getNumPadFromPos(e.clientX, e.clientY);
+        const tool = getToolbarFromPos(e.clientX, e.clientY);
+        hoverPencil = tool === "pencil";
+        hoverUndo = tool === "undo";
+        hoverErase = tool === "erase";
+    }
+});
+
+canvas.addEventListener("touchstart", function(e) {
+    e.preventDefault();
+    const touch = e.touches[0];
+    handleClick(touch.clientX, touch.clientY);
+}, { passive: false });
+
+canvas.addEventListener("touchmove", function(e) {
+    e.preventDefault();
+}, { passive: false });
+
+document.addEventListener("keydown", function(e) {
+    if (phase === PHASE_START) return;
+    if (phase === PHASE_WIN) {
+        if (e.key === "Enter" || e.key === " ") {
+            phase = PHASE_START;
+        }
+        return;
+    }
+
+    const key = e.key;
+    if (key >= "1" && key <= "9") {
+        placeNumber(parseInt(key));
+        return;
+    }
+    if (key === "Backspace" || key === "Delete" || key === "0") {
+        eraseCell();
+        return;
+    }
+    if (key === "p" || key === "P") {
+        pencilMode = !pencilMode;
+        return;
+    }
+    if ((key === "z" || key === "Z") && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        popUndo();
+        return;
+    }
+    if (key === "u" || key === "U") {
+        popUndo();
+        return;
+    }
+    // Arrow keys
+    if (key === "ArrowUp" && selRow > 0) { selRow--; e.preventDefault(); }
+    if (key === "ArrowDown" && selRow < 8) { selRow++; e.preventDefault(); }
+    if (key === "ArrowLeft" && selCol > 0) { selCol--; e.preventDefault(); }
+    if (key === "ArrowRight" && selCol < 8) { selCol++; e.preventDefault(); }
+    if ((key === "ArrowUp" || key === "ArrowDown" || key === "ArrowLeft" || key === "ArrowRight") && selRow < 0) {
+        selRow = 4; selCol = 4;
+    }
+});
+
+function handleClick(px, py) {
+    if (phase === PHASE_START) {
+        const diff = getDiffFromPos(px, py);
+        if (diff >= 0) {
+            startGame(diff);
+        }
+        return;
+    }
+    if (phase === PHASE_WIN) {
+        if (performance.now() - winTime > 800) {
+            phase = PHASE_START;
+        }
+        return;
+    }
+
+    // Check cell click
+    const cell = getCellFromPos(px, py);
+    if (cell) {
+        selRow = cell.r;
+        selCol = cell.c;
+        return;
+    }
+
+    // Check number pad
+    const num = getNumPadFromPos(px, py);
+    if (num > 0) {
+        placeNumber(num);
+        return;
+    }
+
+    // Check toolbar
+    const tool = getToolbarFromPos(px, py);
+    if (tool === "pencil") {
+        pencilMode = !pencilMode;
+        return;
+    }
+    if (tool === "undo") {
+        popUndo();
+        return;
+    }
+    if (tool === "erase") {
+        eraseCell();
+        return;
+    }
+}
+
+// --- Drawing helpers ---
+function drawRoundedRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+}
+
+function formatTime(t) {
+    const mins = Math.floor(t / 60);
+    const secs = Math.floor(t % 60);
+    return String(mins).padStart(2, "0") + ":" + String(secs).padStart(2, "0");
+}
+
+function isError(r, c) {
+    for (const e of errorCells) {
+        if (e.r === r && e.c === c) return true;
+    }
+    return false;
+}
+
+function isSameBox(r1, c1, r2, c2) {
+    return Math.floor(r1 / 3) === Math.floor(r2 / 3) && Math.floor(c1 / 3) === Math.floor(c2 / 3);
+}
+
+// --- Draw: Start screen ---
+function drawStartScreen(now) {
+    ctx.fillStyle = BG;
+    ctx.fillRect(0, 0, W, H);
+
+    const centerX = W / 2;
+    const centerY = H / 2;
+
+    // Title
+    const titleSize = Math.floor(W * 0.1);
+    ctx.font = "bold " + titleSize + "px " + FONT;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    const grad = ctx.createLinearGradient(centerX - 140, centerY - 80, centerX + 140, centerY - 80);
+    grad.addColorStop(0, CYAN);
+    grad.addColorStop(0.5, "#66ffdd");
+    grad.addColorStop(1, PURPLE);
+    ctx.fillStyle = grad;
+    ctx.shadowColor = CYAN;
+    ctx.shadowBlur = 30;
+    ctx.fillText("SUDOKU", centerX, centerY - Math.floor(H * 0.14));
+    ctx.shadowBlur = 0;
+
+    // Subtitle
+    ctx.font = Math.floor(W * 0.032) + "px " + FONT;
+    ctx.fillStyle = "rgba(168, 85, 247, 0.7)";
+    ctx.fillText("mahowald.io", centerX, centerY - Math.floor(H * 0.075));
+
+    // Decorative grid lines
+    const dGridSize = Math.floor(W * 0.55);
+    const dCellSize = dGridSize / 9;
+    const dgx = Math.floor((W - dGridSize) / 2);
+    const dgy = Math.floor(centerY - dGridSize / 2 - H * 0.02);
+    ctx.strokeStyle = "rgba(0, 255, 200, 0.04)";
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 9; i++) {
+        ctx.beginPath();
+        ctx.moveTo(dgx + i * dCellSize, dgy);
+        ctx.lineTo(dgx + i * dCellSize, dgy + dGridSize);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(dgx, dgy + i * dCellSize);
+        ctx.lineTo(dgx + dGridSize, dgy + i * dCellSize);
+        ctx.stroke();
+    }
+    ctx.strokeStyle = "rgba(0, 255, 200, 0.08)";
+    ctx.lineWidth = 2;
+    for (let i = 0; i <= 3; i++) {
+        ctx.beginPath();
+        ctx.moveTo(dgx + i * 3 * dCellSize, dgy);
+        ctx.lineTo(dgx + i * 3 * dCellSize, dgy + dGridSize);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(dgx, dgy + i * 3 * dCellSize);
+        ctx.lineTo(dgx + dGridSize, dgy + i * 3 * dCellSize);
+        ctx.stroke();
+    }
+
+    // Difficulty buttons
+    const btnW = Math.floor(W * 0.4);
+    const btnH = Math.floor(H * 0.055);
+    const gap = Math.floor(H * 0.02);
+    const startY = centerY + Math.floor(H * 0.02);
+    const colors = [CYAN, YELLOW, RED];
+    const btnFontSize = Math.floor(H * 0.024);
+
+    for (let i = 0; i < 3; i++) {
+        const bx = centerX - btnW / 2;
+        const by = startY + i * (btnH + gap);
+        const isHover = hoverDiff === i;
+        const color = colors[i];
+
+        drawRoundedRect(bx, by, btnW, btnH, 4);
+        ctx.fillStyle = isHover ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.02)";
+        ctx.fill();
+        ctx.strokeStyle = isHover ? color : "rgba(255,255,255,0.1)";
+        ctx.lineWidth = isHover ? 2 : 1;
+        ctx.stroke();
+
+        ctx.font = "bold " + btnFontSize + "px " + FONT;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = isHover ? color : "rgba(255,255,255,0.6)";
+        ctx.fillText(DIFF_NAMES[i], centerX, by + btnH / 2);
+
+        // Best time for this difficulty
+        const best = loadBest(i);
+        if (best !== null) {
+            ctx.font = Math.floor(btnFontSize * 0.7) + "px " + FONT;
+            ctx.fillStyle = "rgba(255,255,255,0.25)";
+            ctx.textAlign = "right";
+            ctx.fillText(formatTime(best), bx + btnW - 10, by + btnH / 2);
+            ctx.textAlign = "center";
+        }
+    }
+
+    // Pulsing hint
+    const pulse = 0.5 + 0.5 * Math.sin(now / 600);
+    ctx.globalAlpha = 0.3 + pulse * 0.4;
+    ctx.font = Math.floor(W * 0.028) + "px " + FONT;
+    ctx.fillStyle = CYAN;
+    ctx.fillText("select difficulty to play", centerX, startY + 3 * (btnH + gap) + Math.floor(H * 0.02));
+    ctx.globalAlpha = 1;
+}
+
+// --- Draw: Playing ---
+function drawPlaying(now) {
+    ctx.fillStyle = BG;
+    ctx.fillRect(0, 0, W, H);
+
+    const selectedNum = (selRow >= 0 && selCol >= 0) ? board[selRow][selCol] : 0;
+
+    // --- HUD ---
+    const hudFontSize = Math.floor(H * 0.022);
+    const hudY = Math.floor(GRID_Y * 0.55);
+    ctx.font = "bold " + hudFontSize + "px " + FONT;
+    ctx.textBaseline = "middle";
+
+    // Difficulty label (left)
+    ctx.textAlign = "left";
+    const diffColors = [CYAN, YELLOW, RED];
+    ctx.fillStyle = diffColors[difficulty];
+    ctx.fillText(DIFF_NAMES[difficulty], GRID_X, hudY);
+
+    // Timer (right)
+    let displayTime = elapsed;
+    if (phase === PHASE_PLAYING) {
+        displayTime = (now - startTime) / 1000;
+    }
+    ctx.textAlign = "right";
+    ctx.fillStyle = "rgba(255,255,255,0.6)";
+    ctx.fillText(formatTime(displayTime), GRID_X + GRID_SIZE, hudY);
+
+    // --- Grid ---
+    // Background
+    drawRoundedRect(GRID_X - 2, GRID_Y - 2, GRID_SIZE + 4, GRID_SIZE + 4, 4);
+    ctx.fillStyle = "#0d0d22";
+    ctx.fill();
+
+    // Draw cells
+    for (let r = 0; r < 9; r++) {
+        for (let c = 0; c < 9; c++) {
+            const x = GRID_X + c * CELL;
+            const y = GRID_Y + r * CELL;
+            const isSelected = (r === selRow && c === selCol);
+            const isSameRow = (r === selRow);
+            const isSameCol = (c === selCol);
+            const isSameBoxSel = (selRow >= 0 && isSameBox(r, c, selRow, selCol));
+            const isSameNum = (selectedNum > 0 && board[r][c] === selectedNum);
+            const isErr = isError(r, c);
+
+            // Cell background
+            let cellBg = "#111128";
+            if (isSameRow || isSameCol || isSameBoxSel) {
+                cellBg = "#161640";
+            }
+            if (isSameNum && !isSelected) {
+                cellBg = "rgba(0, 255, 200, 0.08)";
+            }
+            if (isSelected) {
+                cellBg = "rgba(0, 255, 200, 0.15)";
+            }
+
+            ctx.fillStyle = cellBg;
+            ctx.fillRect(x, y, CELL, CELL);
+
+            // Error highlight
+            if (isErr) {
+                const flashAlpha = 0.12 + 0.05 * Math.sin(now / 300);
+                ctx.fillStyle = "rgba(255, 107, 107, " + flashAlpha + ")";
+                ctx.fillRect(x, y, CELL, CELL);
+            }
+
+            // Same number highlight border
+            if (isSameNum && !isSelected) {
+                ctx.strokeStyle = "rgba(0, 255, 200, 0.25)";
+                ctx.lineWidth = 1.5;
+                ctx.strokeRect(x + 1, y + 1, CELL - 2, CELL - 2);
+            }
+
+            // Selected cell glow
+            if (isSelected) {
+                ctx.shadowColor = CYAN;
+                ctx.shadowBlur = 12;
+                ctx.strokeStyle = CYAN;
+                ctx.lineWidth = 2;
+                ctx.strokeRect(x + 1, y + 1, CELL - 2, CELL - 2);
+                ctx.shadowBlur = 0;
+            }
+
+            // Draw number or notes
+            const val = board[r][c];
+            if (val > 0) {
+                const fontSize = Math.floor(CELL * 0.55);
+                ctx.font = "bold " + fontSize + "px " + FONT;
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                if (isErr) {
+                    ctx.fillStyle = RED;
+                } else if (given[r][c]) {
+                    ctx.fillStyle = WHITE;
+                } else {
+                    ctx.fillStyle = CYAN;
+                }
+                ctx.fillText(val.toString(), x + CELL / 2, y + CELL / 2 + 1);
+            } else if (notes[r][c].size > 0) {
+                // Draw pencil marks
+                const noteSize = Math.floor(CELL * 0.25);
+                ctx.font = noteSize + "px " + FONT;
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillStyle = "rgba(168, 85, 247, 0.65)";
+                for (const n of notes[r][c]) {
+                    const nr = Math.floor((n - 1) / 3);
+                    const nc = (n - 1) % 3;
+                    const nx = x + (nc + 0.5) * (CELL / 3);
+                    const ny = y + (nr + 0.5) * (CELL / 3);
+                    ctx.fillText(n.toString(), nx, ny);
+                }
+            }
+        }
+    }
+
+    // Grid lines (thin)
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.07)";
+    ctx.lineWidth = 1;
+    for (let i = 1; i < 9; i++) {
+        if (i % 3 === 0) continue;
+        ctx.beginPath();
+        ctx.moveTo(GRID_X + i * CELL, GRID_Y);
+        ctx.lineTo(GRID_X + i * CELL, GRID_Y + GRID_SIZE);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(GRID_X, GRID_Y + i * CELL);
+        ctx.lineTo(GRID_X + GRID_SIZE, GRID_Y + i * CELL);
+        ctx.stroke();
+    }
+
+    // Grid lines (thick, box borders)
+    ctx.strokeStyle = "rgba(0, 255, 200, 0.2)";
+    ctx.lineWidth = 2;
+    for (let i = 0; i <= 3; i++) {
+        ctx.beginPath();
+        ctx.moveTo(GRID_X + i * 3 * CELL, GRID_Y);
+        ctx.lineTo(GRID_X + i * 3 * CELL, GRID_Y + GRID_SIZE);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(GRID_X, GRID_Y + i * 3 * CELL);
+        ctx.lineTo(GRID_X + GRID_SIZE, GRID_Y + i * 3 * CELL);
+        ctx.stroke();
+    }
+
+    // --- Number Pad ---
+    const totalPadW = 9 * PAD_CELL + 8 * 4;
+    const padX = Math.floor((W - totalPadW) / 2);
+    const numFontSize = Math.floor(PAD_CELL * 0.52);
+
+    // Count remaining for each number
+    const counts = new Array(10).fill(0);
+    for (let r = 0; r < 9; r++) {
+        for (let c = 0; c < 9; c++) {
+            if (board[r][c] > 0 && board[r][c] === solution[r][c]) {
+                counts[board[r][c]]++;
+            }
+        }
+    }
+
+    for (let i = 0; i < 9; i++) {
+        const num = i + 1;
+        const bx = padX + i * (PAD_CELL + 4);
+        const by = PAD_Y;
+        const isHover = hoverNum === num;
+        const isComplete = counts[num] >= 9;
+
+        drawRoundedRect(bx, by, PAD_CELL, PAD_CELL, 3);
+        if (isComplete) {
+            ctx.fillStyle = "rgba(255,255,255,0.02)";
+        } else if (selectedNum === num) {
+            ctx.fillStyle = "rgba(0, 255, 200, 0.12)";
+        } else if (isHover) {
+            ctx.fillStyle = "rgba(255,255,255,0.06)";
+        } else {
+            ctx.fillStyle = "rgba(255,255,255,0.03)";
+        }
+        ctx.fill();
+
+        if (selectedNum === num && !isComplete) {
+            ctx.strokeStyle = CYAN;
+            ctx.lineWidth = 1.5;
+        } else if (isHover && !isComplete) {
+            ctx.strokeStyle = "rgba(255,255,255,0.15)";
+            ctx.lineWidth = 1;
+        } else {
+            ctx.strokeStyle = "rgba(255,255,255,0.06)";
+            ctx.lineWidth = 1;
+        }
+        ctx.stroke();
+
+        ctx.font = "bold " + numFontSize + "px " + FONT;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = isComplete ? "rgba(255,255,255,0.15)" : (selectedNum === num ? CYAN : "rgba(255,255,255,0.7)");
+        ctx.fillText(num.toString(), bx + PAD_CELL / 2, by + PAD_CELL / 2 + 1);
+
+        // Remaining count
+        if (!isComplete) {
+            const remaining = 9 - counts[num];
+            const countSize = Math.floor(PAD_CELL * 0.22);
+            ctx.font = countSize + "px " + FONT;
+            ctx.fillStyle = "rgba(255,255,255,0.2)";
+            ctx.fillText(remaining.toString(), bx + PAD_CELL / 2, by + PAD_CELL - countSize * 0.6);
+        }
+    }
+
+    // --- Toolbar buttons ---
+    const toolY = PAD_Y + PAD_CELL + Math.floor(H * 0.018);
+    const btnW = Math.floor(W * 0.2);
+    const btnH = Math.floor(H * 0.04);
+    const gap = Math.floor(W * 0.04);
+    const totalBtnW = 3 * btnW + 2 * gap;
+    const startBtnX = Math.floor((W - totalBtnW) / 2);
+    const tbFontSize = Math.floor(H * 0.019);
+
+    // Pencil button
+    drawRoundedRect(startBtnX, toolY, btnW, btnH, 3);
+    ctx.fillStyle = pencilMode ? "rgba(168, 85, 247, 0.15)" : (hoverPencil ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.02)");
+    ctx.fill();
+    ctx.strokeStyle = pencilMode ? PURPLE : (hoverPencil ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.06)");
+    ctx.lineWidth = pencilMode ? 1.5 : 1;
+    ctx.stroke();
+    ctx.font = tbFontSize + "px " + FONT;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = pencilMode ? PURPLE : (hoverPencil ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.45)");
+    ctx.fillText("NOTES" + (pencilMode ? " ON" : ""), startBtnX + btnW / 2, toolY + btnH / 2);
+
+    // Undo button
+    const undoX = startBtnX + btnW + gap;
+    drawRoundedRect(undoX, toolY, btnW, btnH, 3);
+    ctx.fillStyle = hoverUndo ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.02)";
+    ctx.fill();
+    ctx.strokeStyle = hoverUndo ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.06)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = undoStack.length > 0 ? (hoverUndo ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.45)") : "rgba(255,255,255,0.15)";
+    ctx.fillText("UNDO", undoX + btnW / 2, toolY + btnH / 2);
+
+    // Erase button
+    const eraseX = startBtnX + 2 * (btnW + gap);
+    drawRoundedRect(eraseX, toolY, btnW, btnH, 3);
+    ctx.fillStyle = hoverErase ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.02)";
+    ctx.fill();
+    ctx.strokeStyle = hoverErase ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.06)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = hoverErase ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.45)";
+    ctx.fillText("ERASE", eraseX + btnW / 2, toolY + btnH / 2);
+}
+
+// --- Draw: Win screen ---
+function drawWinScreen(now) {
+    // Draw the completed board behind
+    drawPlaying(now);
+
+    const t = Math.min(1, (now - winTime) / 800);
+    const ease = 1 - Math.pow(1 - t, 3);
+
+    // Overlay
+    ctx.globalAlpha = ease * 0.8;
+    ctx.fillStyle = "rgba(10, 10, 26, 0.88)";
+    ctx.fillRect(0, 0, W, H);
+    ctx.globalAlpha = ease;
+
+    const centerX = W / 2;
+    const centerY = H / 2;
+
+    // Title
+    const titleSize = Math.floor(W * 0.1);
+    ctx.font = "bold " + titleSize + "px " + FONT;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.shadowColor = CYAN;
+    ctx.shadowBlur = 25;
+    ctx.fillStyle = CYAN;
+    ctx.fillText("COMPLETE!", centerX, centerY - Math.floor(H * 0.07));
+    ctx.shadowBlur = 0;
+
+    // Time
+    ctx.font = Math.floor(W * 0.042) + "px " + FONT;
+    ctx.fillStyle = WHITE;
+    ctx.fillText("time: " + formatTime(elapsed), centerX, centerY - Math.floor(H * 0.01));
+
+    // Difficulty
+    const diffColors = [CYAN, YELLOW, RED];
+    ctx.font = Math.floor(W * 0.034) + "px " + FONT;
+    ctx.fillStyle = diffColors[difficulty];
+    ctx.fillText(DIFF_NAMES[difficulty], centerX, centerY + Math.floor(H * 0.04));
+
+    // Best time
+    const best = loadBest(difficulty);
+    if (best !== null && elapsed <= best + 0.01) {
+        ctx.font = "bold " + Math.floor(W * 0.035) + "px " + FONT;
+        ctx.fillStyle = YELLOW;
+        ctx.shadowColor = YELLOW;
+        ctx.shadowBlur = 15;
+        ctx.fillText("NEW BEST!", centerX, centerY + Math.floor(H * 0.09));
+        ctx.shadowBlur = 0;
+    } else if (best !== null) {
+        ctx.font = Math.floor(W * 0.03) + "px " + FONT;
+        ctx.fillStyle = "rgba(0, 255, 200, 0.5)";
+        ctx.fillText("best: " + formatTime(best), centerX, centerY + Math.floor(H * 0.09));
+    }
+
+    // Click to continue
+    const pulse = 0.5 + 0.5 * Math.sin(now / 600);
+    ctx.globalAlpha = (0.3 + pulse * 0.5) * ease;
+    ctx.font = Math.floor(W * 0.028) + "px " + FONT;
+    ctx.fillStyle = CYAN;
+    ctx.fillText("click to continue", centerX, centerY + Math.floor(H * 0.15));
+    ctx.globalAlpha = 1;
+}
+
+// --- Main loop ---
+let lastFrame = 0;
+function frame(now) {
+    const dt = Math.min((now - lastFrame) / 1000, 0.05);
+    lastFrame = now;
+
+    ctx.clearRect(0, 0, W, H);
+
+    if (phase === PHASE_START) {
+        drawStartScreen(now);
+    } else if (phase === PHASE_PLAYING) {
+        drawPlaying(now);
+    } else if (phase === PHASE_WIN) {
+        drawWinScreen(now);
+    }
+
+    updateParticles(dt);
+    drawParticles();
+
+    requestAnimationFrame(frame);
+}
+
+requestAnimationFrame(frame);
+
+})();
+</script>
+</body>
+</html>
